@@ -154,33 +154,43 @@ def read_record(root_dir):
     total_time = 0
     label = 0
     small = 9999999
-    for index in range(1, 5179510):
+    for index in range(1, 490623):
         s1 = mask_out_rec.read_idx(index)
         header, image = mx.recordio.unpack(s1)
         small = min(small, header.label)
         label = max(label, header.label)
         start = time.time()
-        # image = mx.image.imdecode(image, to_rgb=0).asnumpy()  # bgr
         total_time += time.time() - start
-        # image = PIL.Image.fromarray(image)
-        # image.save('mask_out_' + str(index) + '.jpg')
-        # cv2.imwrite('mask_out_' + str(index) + '.jpg', image)
 
-        # s2 = mask_rec.read_idx(index)
-        # header, image = mx.recordio.unpack(s2)
-        # image = mx.image.imdecode(image, to_rgb=0).asnumpy()
-        # mask = cv2.merge([image[:, :, 2], image[:, :, 1], image[:, :, 0]])
-        # # cv2.imwrite('mask_' + str(index) + '.jpg', mask)
+        """ save img """
+        if index < 10:
+            image = mx.image.imdecode(image, to_rgb=1).asnumpy()  # rgb
+            image = PIL.Image.fromarray(image)
+            image.save('mask_out_' + str(index) + '.jpg')
+            # cv2.imwrite('mask_out_' + str(index) + '.jpg', image)
+
+            s2 = mask_rec.read_idx(index)
+            header, image = mx.recordio.unpack(s2)
+            image = mx.image.imdecode(image, to_rgb=0).asnumpy()  # bgr
+            mask = cv2.merge([image[:, :, 2], image[:, :, 1], image[:, :, 0]])
+            cv2.imwrite('mask_' + str(index) + '.jpg', mask)
 
     print('total cost time : %.6f' % total_time)
     print('max label:', label, 'small label:', small)
+    # > max label: 10571.0 small label: 0.0
 
 
 if __name__ == '__main__':
 
     root_dir = '/home/yuange/dataset/CASIA/insightface'
 
-    write_record(root_dir)
+    """ Write record will recover the old file
+        Make sure your important files are saved or backed up
+    """
+    # write_record(root_dir)
+
+    """ Read record and return the class count
+    """
     read_record(root_dir)
 
 
