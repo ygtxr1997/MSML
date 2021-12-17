@@ -217,7 +217,7 @@ class Unet(nn.Module):
         x0_ = self.gcm5(x0)
         seg5_ = self.deconv5(torch.cat((seg3, x0_), 1))  # (2*9, 112, 112) | (2*9, 128, 128)
 
-        seg5 = self.DAP(seg5_)  # (2*9, 112, 112) | (2*9, 128, 128)
+        seg5 = self.DAP(seg5_)  # (2, 112, 112) | (2, 128, 128)
 
         """ Use detach link or not """
         # # 1. Use detach link (default)

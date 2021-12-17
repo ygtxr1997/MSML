@@ -12,6 +12,9 @@ import torch.nn.functional as F
 from collections import OrderedDict
 
 
+__all__ = ['lightcnn29',]
+
+
 model_dir = {
     'LightCNN-9': '../pretrained/LightCNN_9Layers_checkpoint.pth.tar',
     'LightCNN-29': '../pretrained/LightCNN_29Layers_checkpoint.pth.tar',
@@ -142,7 +145,6 @@ class network_29layers(nn.Module):
 class network_29layers_v2(nn.Module):
     def __init__(self, block,
                  layers,
-                 num_classes=79077,
                  dim_feature=256,
                 ):
         super(network_29layers_v2, self).__init__()
@@ -157,7 +159,10 @@ class network_29layers_v2(nn.Module):
         self.group4 = group(128, 128, 3, 1, 1)
         self.fc = nn.Linear(8 * 8 * 128, dim_feature)
         self.drop = nn.Dropout()
-        self.fc2 = nn.Linear(dim_feature, num_classes, bias=False)
+        # self.fc2 = nn.Linear(dim_feature, num_classes, bias=False)
+        """ Different from vanilla LightCNN,
+        frb backbones only extract embedded features without classification layers
+        """
 
     def _make_layer(self, block, num_blocks, in_channels, out_channels):
         layers = []
@@ -184,16 +189,14 @@ class network_29layers_v2(nn.Module):
         x = F.max_pool2d(x, 2) + F.avg_pool2d(x, 2)
 
         x = x.view(x.size(0), -1)
-        fc = self.fc(x)
-        x = self.drop(fc)
-        out = self.fc2(x)
+        x = self.fc(x)
+        x = self.drop(x)
 
-        if self.training:
-            return out
-        else:
-            return fc
+        return x
 
 
+""" Vanilla LightCNN
+"""
 def LightCNN_9Layers(**kwargs):
     model = network_9layers(**kwargs)
     return model
@@ -209,11 +212,20 @@ def LightCNN_29Layers_v2(**kwargs):
     return model
 
 
-def lightcnn29(pretrained=False, num_classes=10572, dim_feature=256):
+""" LightCNN in FRB
+input:
+    img     - (B, 1, 128, 128)
+    segs    - [(B, 18, 16, 16),     # seg0
+               (B, 18, 32, 32),     # seg1
+               (B, 18, 64, 64),     # seg2
+               (B, 18, 128, 128),]  # seg3
+output:
+    feature - (B, dim_feature)
+"""
+def lightcnn29(pretrained=False, dim_feature=256):
     if pretrained:
         # customized model based on 'lightcnn'
         model = network_29layers_v2(resblock, [1, 2, 3, 4],
-                                    num_classes=80013,  # this will be modified later
                                     dim_feature=dim_feature)
 
         # load pretrained weight
@@ -227,7 +239,8 @@ def lightcnn29(pretrained=False, num_classes=10572, dim_feature=256):
         for key in pre_trained_dict:
             # print(key)
             # > module.block4.3.conv2.filter.bias
-            tmp_dict[key[7:]] = pre_trained_dict[key]
+            if 'fc2' not in key:  # skip classification FC layer
+                tmp_dict[key[7:]] = pre_trained_dict[key]
 
         # get customized model layers which don't exist in 'lightcnn' and insert to tmp
         model_dict = model.state_dict()
@@ -241,15 +254,8 @@ def lightcnn29(pretrained=False, num_classes=10572, dim_feature=256):
         model.load_state_dict(tmp_dict)
         print('=> Loaded.')
 
-        # classification FC layer
-        # lightcnn: 80013 classes
-        # casia: 10572 or 10575 classes
-        if num_classes != 80013:
-            model.fc2 = nn.Linear(256, num_classes, bias=False)
-
     else:
         model = network_29layers_v2(resblock, [1, 2, 3, 4],
-                                    num_classes=num_classes,
                                     dim_feature=dim_feature)
 
     return model
@@ -259,10 +265,10 @@ if __name__ == '__main__':
 
     light = lightcnn29(
         pretrained=True,
-        num_classes=10572,
     )
     img = torch.randn((1, 1, 128, 128))
-    pred = light(img)
+    feature = light(img)
+    print(feature.shape)
 
     import thop
     flops, params = thop.profile(light, inputs=(img,))
