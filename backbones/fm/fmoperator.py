@@ -8,6 +8,9 @@ from einops.layers.torch import Rearrange
 from einops import rearrange
 
 
+__all__ = ['FMCnn',]
+
+
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
     return nn.Conv2d(in_planes,
@@ -66,24 +69,49 @@ class resblock_bottle(nn.Module):  # bottle neck
 
 
 class FMCnn(nn.Module):
-    def __init__(self, height, width, channel):
+    def __init__(self, height,
+                 width,
+                 channel_f,
+                 kernel_size=3,
+                 resblocks=2,
+                 activation='tanh',
+                 ):
         super(FMCnn, self).__init__()
 
+        # Y_f and Y_s share the same height and width
         self.height = height
         self.width = width
 
-        self.same_conv = nn.Conv2d(18 + channel, channel, kernel_size=3, stride=1, padding=1)
-        self.res_block = self._make_layer_light(resblock_bottle, 2, channel, channel)
+        """ Part1. 2D Filter """
+        self.same_conv = conv3x3(18 + channel_f, channel_f)
+        if kernel_size == 1:
+            self.same_conv = conv1x1(18 + channel_f, channel_f)
 
-        self.mask_norm = torch.tanh
+        """ Part2. ResBlock """
+        self.res_block = self._make_resblocks(resblock_bottle,
+                                              num_blocks=resblocks,
+                                              in_channels=channel_f,
+                                              out_channels=channel_f)
 
-    def _make_layer_light(self, block, num_blocks, in_channels, out_channels):
+        """ Part3. Activation Function """
+        act_dict = {
+            'tanh': torch.tanh,
+            'sigmoid': torch.sigmoid,
+        }
+        self.mask_norm = act_dict[activation]
+
+    def _make_resblocks(self, block, num_blocks, in_channels, out_channels):
         layers = []
         for i in range(0, num_blocks):
             layers.append(block(in_channels, out_channels))
         return nn.Sequential(*layers)
 
     def forward(self, yf, yo):
+        """
+        :param yf: facial features
+        :param yo: occlusion segmentation representations
+        :return: Z_f, purified facial features have the same shape with yf
+        """
         identity = yf
         x = torch.cat((yf, yo), dim=1)
         x = self.same_conv(x)
@@ -94,46 +122,51 @@ class FMCnn(nn.Module):
 
 if __name__ == '__main__':
 
+    gray = False
+    if not gray:
+        # iresnet, input=(1, 3, 112, 112)
+        # torch.Size([1, 64, 56, 56])                                                                            │
+        # torch.Size([1, 128, 28, 28])                                                                            │
+        # torch.Size([1, 256, 14, 14])                                                                           │
+        # torch.Size([1, 512, 7, 7])
+        heights = [56, 28, 14, 7]
+        f_channels = [64, 128, 256, 512]
+    else:
+        # lightcnn, input=(1, 1, 128, 128)
+        # torch.Size([1, 48, 64, 64])                                                                            │
+        # torch.Size([1, 96, 32, 32])                                                                            │
+        # torch.Size([1, 192, 16, 16])                                                                           │
+        # torch.Size([1, 128, 8, 8])
+        heights = [64, 32, 16, 8]
+        f_channels = [48, 96, 192, 128]
+
+    s_channels = [18, 18, 18, 18]
+
     for layer in range(1, 5):
 
         print('*************************** layer [%d] ***************************' % layer)
 
-        if layer == 1:
-            shape_f = (1, 512, 7, 7)
-            shape_o = (1, 18, 7, 7)
-            dim = 512
-            channel = 512
-        elif layer == 2:
-            shape_f = (1, 256, 14, 14)
-            shape_o = (1, 18, 14, 14)
-            dim = 256
-            channel = 256
-        elif layer == 3:
-            shape_f = (1, 128, 28, 28)
-            shape_o = (1, 18, 28, 28)
-            dim = 512
-            channel = 128
-        elif layer == 4:
-            shape_f = (1, 64, 56, 56)
-            shape_o = (1, 18, 56, 56)
-            dim = 1024
-            channel = 64
+        idx = layer - 1
+        height = heights[idx]
+        f_channel = f_channels[idx]
+        s_channel = s_channels[idx]
 
-        yf_i = torch.randn(shape_f).cpu()
-        yo_j = torch.randn(shape_o).cpu()
+        yf_i = torch.randn((1, f_channel, height, height)).cpu()
+        yo_j = torch.randn((1, s_channel, height, height)).cpu()
 
         ''' type 1 '''
-        mlm = FMCnn(
+        fm = FMCnn(
             height=yf_i.shape[2],
             width=yf_i.shape[3],
-            channel=channel
+            channel_f=f_channel
         )
 
-        z_i = mlm(yf_i, yo_j)
+        z_i = fm(yf_i, yo_j)
         print('output shape:', z_i.shape)
+        assert z_i.shape == yf_i.shape
 
-        from torchinfo import summary
-        summary(mlm, [shape_f, shape_o], depth=0)
+        # from torchinfo import summary
+        # summary(mlm, [shape_f, shape_s], depth=0)
         from thop import profile
-        flops, params = profile(mlm, inputs=(yf_i.cuda(), yo_j.cuda()))
+        flops, params = profile(fm.cuda(), inputs=(yf_i.cuda(), yo_j.cuda()))
         print('fm flops:', flops / 1e9, 'params:', params / 1e6)
