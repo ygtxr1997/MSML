@@ -6,6 +6,9 @@ from collections import OrderedDict
 
 import numpy as np
 
+
+__all__ = ['unet',]
+
 """ 
 Implementation of Large Kernel Matters Paper (face++)
 Author: Xiangtai(lxtpku@pku.edu.cn)
@@ -95,8 +98,8 @@ class Unet(nn.Module):
                  num_classes=2,
                  kernel_size=7,
                  dap_k=3,
-                 gray=True,
-                 input_size=128,
+                 gray=True,  # important
+                 input_size=128,  # important
                  ):
         super(Unet, self).__init__()
 
@@ -237,20 +240,40 @@ class Unet(nn.Module):
         return msk_feats
 
 
-def unet(face_classes=10575, pre_trained=False, backbone='r18', **kwargs):
+def unet(pre_trained=False,
+         backbone='r18',
+         gray=True,
+         input_size=128,
+         **kwargs):
     if pre_trained:
         print('No pretrained model for mskfuse29_light_y_seg')
     else:
         if 'r18' in backbone:
-            model = Unet(IBasicBlock, [2, 2, 2, 2], num_classes=2, **kwargs)
+            model = Unet(IBasicBlock, [2, 2, 2, 2],
+                         num_classes=2,
+                         gray=gray,
+                         input_size=input_size,
+                         **kwargs)
         elif 'r34' in backbone:
-            model = Unet(IBasicBlock, [3, 4, 6, 3], num_classes=2, **kwargs)
+            model = Unet(IBasicBlock, [3, 4, 6, 3], num_classes=2,
+                         gray=gray,
+                         input_size=input_size,
+                         **kwargs)
         elif 'r50' in backbone:
-            model = Unet(IBasicBlock, [3, 4, 14, 3], num_classes=2, **kwargs)
+            model = Unet(IBasicBlock, [3, 4, 14, 3], num_classes=2,
+                         gray=gray,
+                         input_size=input_size,
+                         **kwargs)
         elif 'r100' in backbone:
-            model = Unet(IBasicBlock, [3, 13, 30, 3], num_classes=2, **kwargs)
+            model = Unet(IBasicBlock, [3, 13, 30, 3], num_classes=2,
+                         gray=gray,
+                         input_size=input_size,
+                         **kwargs)
         elif 'r200' in backbone:
-            model = Unet(IBasicBlock, [6, 26, 60, 6], num_classes=2, **kwargs)
+            model = Unet(IBasicBlock, [6, 26, 60, 6], num_classes=2,
+                         gray=gray,
+                         input_size=input_size,
+                         **kwargs)
         else:
             print('Error backbone type in OSB.')
     return model

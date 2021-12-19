@@ -233,7 +233,7 @@ def LightCNN_29Layers_v2(**kwargs):
 
 
 def lightcnn29(fm_ops,
-               pretrained=False,
+               pretrained=True,
                dim_feature=256):
     if pretrained:
         # customized model based on 'lightcnn'
