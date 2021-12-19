@@ -278,7 +278,8 @@ if __name__ == '__main__':
                input_size=128)
     img = torch.zeros((1, 1, 128, 128))
     out = osb(img)
-    print(out[-1].shape)
+    for idx in range(4):
+        print(idx, out[idx].shape)
 
     import thop
     flops, params = thop.profile(osb, inputs=(img,))

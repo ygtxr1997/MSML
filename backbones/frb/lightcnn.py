@@ -145,8 +145,9 @@ class network_29layers(nn.Module):
 class network_29layers_v2(nn.Module):
     def __init__(self, block,
                  layers,
+                 fm_ops,
                  dim_feature=256,
-                ):
+                 ):
         super(network_29layers_v2, self).__init__()
         self.conv1 = mfm(1, 48, 5, 1, 2)
         self.block1 = self._make_layer(block, layers[0], 48, 48)
@@ -159,10 +160,15 @@ class network_29layers_v2(nn.Module):
         self.group4 = group(128, 128, 3, 1, 1)
         self.fc = nn.Linear(8 * 8 * 128, dim_feature)
         self.drop = nn.Dropout()
-        # self.fc2 = nn.Linear(dim_feature, num_classes, bias=False)
+
         """ Different from vanilla LightCNN,
         frb backbones only extract embedded features without classification layers
         """
+        # self.fc2 = nn.Linear(dim_feature, num_classes, bias=False)
+
+        """ List of Feature Masking Operators """
+        self.fm_ops = fm_ops
+        assert len(fm_ops) == 4
 
     def _make_layer(self, block, num_blocks, in_channels, out_channels):
         layers = []
@@ -170,23 +176,37 @@ class network_29layers_v2(nn.Module):
             layers.append(block(in_channels, out_channels))
         return nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x, segs):
+        """ LightCNN in FRB
+        input:
+            img     - (B, 1, 128, 128)
+            segs    - [(B, 18, 64, 64),   # seg3
+                       (B, 18, 32, 32),     # seg2
+                       (B, 18, 16, 16),     # seg1
+                       (B, 18, 8, 8),]    # seg0
+        output:
+            feature - (B, dim_feature)
+        """
         x = self.conv1(x)
         x = F.max_pool2d(x, 2) + F.avg_pool2d(x, 2)
+        x = self.fm_ops[0](x, segs[0])
 
         x = self.block1(x)
         x = self.group1(x)
         x = F.max_pool2d(x, 2) + F.avg_pool2d(x, 2)
+        x = self.fm_ops[1](x, segs[1])
 
         x = self.block2(x)
         x = self.group2(x)
         x = F.max_pool2d(x, 2) + F.avg_pool2d(x, 2)
+        x = self.fm_ops[2](x, segs[2])
 
         x = self.block3(x)
         x = self.group3(x)
         x = self.block4(x)
         x = self.group4(x)
         x = F.max_pool2d(x, 2) + F.avg_pool2d(x, 2)
+        x = self.fm_ops[3](x, segs[3])
 
         x = x.view(x.size(0), -1)
         x = self.fc(x)
@@ -212,20 +232,13 @@ def LightCNN_29Layers_v2(**kwargs):
     return model
 
 
-""" LightCNN in FRB
-input:
-    img     - (B, 1, 128, 128)
-    segs    - [(B, 18, 16, 16),     # seg0
-               (B, 18, 32, 32),     # seg1
-               (B, 18, 64, 64),     # seg2
-               (B, 18, 128, 128),]  # seg3
-output:
-    feature - (B, dim_feature)
-"""
-def lightcnn29(pretrained=False, dim_feature=256):
+def lightcnn29(fm_ops,
+               pretrained=False,
+               dim_feature=256):
     if pretrained:
         # customized model based on 'lightcnn'
         model = network_29layers_v2(resblock, [1, 2, 3, 4],
+                                    fm_ops=fm_ops,
                                     dim_feature=dim_feature)
 
         # load pretrained weight
@@ -256,6 +269,7 @@ def lightcnn29(pretrained=False, dim_feature=256):
 
     else:
         model = network_29layers_v2(resblock, [1, 2, 3, 4],
+                                    fm_ops=fm_ops,
                                     dim_feature=dim_feature)
 
     return model
@@ -263,13 +277,42 @@ def lightcnn29(pretrained=False, dim_feature=256):
 
 if __name__ == '__main__':
 
+    """ Prepare for Feature Masking Operators """
+    from backbones.fm import FMCnn, FMNone
+    heights = [64, 32, 16, 8]
+    f_channels = [48, 96, 192, 128]
+    s_channels = [18, 18, 18, 18]
+    fm_layers = [0, 1, 1, 0]
+
+    fm_ops = []
+    for i in range(4):
+        fm_type = fm_layers[i]
+        if fm_type == 0:
+            fm_ops.append(FMNone())
+        elif fm_type == 1:
+            fm_ops.append(FMCnn(
+                height=heights[i],
+                width=heights[i],
+                channel_f=f_channels[i]
+            ))
+        else:
+            raise ValueError
+
+    """ Prepare for Occlusion Segmentation Representations """
+    segs = [torch.randn(1, 18, 64, 64),  # seg3
+            torch.randn(1, 18, 32, 32),  # seg2
+            torch.randn(1, 18, 16, 16),  # seg1
+            torch.randn(1, 18, 8, 8),]  # seg0
+
+    """ Test for lightcnn29 """
     light = lightcnn29(
+        fm_ops=fm_ops,
         pretrained=True,
     )
     img = torch.randn((1, 1, 128, 128))
-    feature = light(img)
+    feature = light(img, segs)
     print(feature.shape)
 
     import thop
-    flops, params = thop.profile(light, inputs=(img,))
+    flops, params = thop.profile(light, inputs=(img, segs))
     print('flops', flops / 1e9, 'params', params / 1e6)

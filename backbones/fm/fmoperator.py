@@ -8,7 +8,7 @@ from einops.layers.torch import Rearrange
 from einops import rearrange
 
 
-__all__ = ['FMCnn',]
+__all__ = ['FMCnn', 'FMNone']
 
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
@@ -118,6 +118,19 @@ class FMCnn(nn.Module):
         x = self.res_block(x)
         x = self.mask_norm(x) + identity
         return x
+
+
+class FMNone(nn.Module):
+    def __init__(self,):
+        super(FMNone, self).__init__()
+
+    def forward(self, yf, yo):
+        """
+        :param yf: facial features
+        :param yo: occlusion segmentation representations
+        :return: yf, do nothing!
+        """
+        return yf
 
 
 if __name__ == '__main__':
