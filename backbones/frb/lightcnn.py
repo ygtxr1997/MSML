@@ -166,9 +166,9 @@ class network_29layers_v2(nn.Module):
         """
         # self.fc2 = nn.Linear(dim_feature, num_classes, bias=False)
 
-        """ List of Feature Masking Operators """
-        self.fm_ops = fm_ops
+        """ List of Feature Masking Operators: [x, x, x, x] """
         assert len(fm_ops) == 4
+        self.fm_ops = nn.ModuleList(fm_ops)
 
     def _make_layer(self, block, num_blocks, in_channels, out_channels):
         layers = []
@@ -181,8 +181,8 @@ class network_29layers_v2(nn.Module):
         input:
             img     - (B, 1, 128, 128)
             segs    - [(B, 18, 64, 64),   # seg3
-                       (B, 18, 32, 32),     # seg2
-                       (B, 18, 16, 16),     # seg1
+                       (B, 18, 32, 32),   # seg2
+                       (B, 18, 16, 16),   # seg1
                        (B, 18, 8, 8),]    # seg0
         output:
             feature - (B, dim_feature)
@@ -231,7 +231,8 @@ def LightCNN_29Layers_v2(**kwargs):
     model = network_29layers_v2(resblock, [1, 2, 3, 4], **kwargs)
     return model
 
-
+""" FRB version of LightCNN
+"""
 def lightcnn29(fm_ops,
                pretrained=True,
                dim_feature=256):

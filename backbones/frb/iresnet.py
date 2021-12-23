@@ -1,8 +1,7 @@
 import torch
 from torch import nn
 
-__all__ = ['iresnet18', 'iresnet34', 'iresnet50',
-           'iresnet100', 'iresnet152', 'iresnet200',]
+__all__ = ['iresnet18', 'iresnet34', 'iresnet50',]
 
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
@@ -61,8 +60,15 @@ class IBasicBlock(nn.Module):
 class IResNet(nn.Module):
     fc_scale = 7 * 7
     def __init__(self,
-                 block, layers, dropout=0, num_features=512, zero_init_residual=False,
-                 groups=1, width_per_group=64, replace_stride_with_dilation=None, fp16=False):
+                 block,
+                 layers,
+                 fm_ops,
+                 dim_feature=512,
+                 dropout=0,
+                 zero_init_residual=False,
+                 groups=1, width_per_group=64,
+                 replace_stride_with_dilation=None,
+                 fp16=False):
         super(IResNet, self).__init__()
         self.fp16 = fp16
         self.inplanes = 64
@@ -96,10 +102,14 @@ class IResNet(nn.Module):
 
         self.bn2 = nn.BatchNorm2d(512 * block.expansion, eps=1e-05,)
         self.dropout = nn.Dropout(p=dropout, inplace=True)
-        self.fc = nn.Linear(512 * block.expansion * self.fc_scale, num_features)
-        self.features = nn.BatchNorm1d(num_features, eps=1e-05)
+        self.fc = nn.Linear(512 * block.expansion * self.fc_scale, dim_feature)
+        self.features = nn.BatchNorm1d(dim_feature, eps=1e-05)
         nn.init.constant_(self.features.weight, 1.0)
         self.features.weight.requires_grad = False
+
+        """ List of Feature Masking Operators: [x, x, x, x] """
+        assert len(fm_ops) == 4
+        self.fm_ops = nn.ModuleList(fm_ops)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -139,63 +149,152 @@ class IResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x, segs):
+        """ IResNet in FRB
+        input:
+            img     - (B, 3, 112, 112)
+            segs    - [(B, 18, 56, 56),   # seg3
+                       (B, 18, 28, 28),   # seg2
+                       (B, 18, 14, 14),   # seg1
+                       (B, 18, 7, 7),]    # seg0
+        output:
+            feature - (B, dim_feature)
+        """
         with torch.cuda.amp.autocast(self.fp16):
             x = self.conv1(x)
             x = self.bn1(x)
-            x = self.prelu(x)
-            x = self.layer1(x)
-            x = self.layer2(x)
+            x = self.prelu(x)  # stem stage
+
+            x = self.layer1(x)  # (64, 56, 56)
+            x = self.fm_ops[0](x, segs[0])
+
+            x = self.layer2(x)  # (128, 28, 28)
+            x = self.fm_ops[1](x, segs[1])
+
             x = self.layer3(x)  # (256, 14, 14)
-            x = self.layer4(x)
-            # print('layer4: ', x.shape)
+            x = self.fm_ops[2](x, segs[2])
+
+            x = self.layer4(x)  # (512, 7, 7)
+            x = self.fm_ops[3](x, segs[3])
+
             x = self.bn2(x)
             x = torch.flatten(x, 1)
             x = self.dropout(x)
         x = self.fc(x.float() if self.fp16 else x)
+        print(x.shape)
         x = self.features(x)
         return x
 
 
-def _iresnet(arch, block, layers, pretrained, progress, **kwargs):
+""" Vanilla IResNet
+"""
+def _iresnet_v(arch, block, layers, pretrained, progress, **kwargs):
     model = IResNet(block, layers, **kwargs)
     if pretrained:
         raise ValueError()
     return model
 
-
-def iresnet18(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet18', IBasicBlock, [2, 2, 2, 2], pretrained,
+def iresnet18_v(pretrained=False, progress=True, **kwargs):
+    return _iresnet_v('iresnet18', IBasicBlock, [2, 2, 2, 2], pretrained,
                     progress, **kwargs)
 
 
-def iresnet34(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet34', IBasicBlock, [3, 4, 6, 3], pretrained,
+def iresnet34_v(pretrained=False, progress=True, **kwargs):
+    return _iresnet_v('iresnet34', IBasicBlock, [3, 4, 6, 3], pretrained,
                     progress, **kwargs)
 
 
-def iresnet50(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet50', IBasicBlock, [3, 4, 14, 3], pretrained,
+def iresnet50_v(pretrained=False, progress=True, **kwargs):
+    return _iresnet_v('iresnet50', IBasicBlock, [3, 4, 14, 3], pretrained,
                     progress, **kwargs)
 
 
-def iresnet100(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet100', IBasicBlock, [3, 13, 30, 3], pretrained,
+def iresnet100_v(pretrained=False, progress=True, **kwargs):
+    return _iresnet_v('iresnet100', IBasicBlock, [3, 13, 30, 3], pretrained,
                     progress, **kwargs)
 
 
-def iresnet152(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet152', IBasicBlock, [3, 21, 48, 3], pretrained,
+def iresnet152_v(pretrained=False, progress=True, **kwargs):
+    return _iresnet_v('iresnet152', IBasicBlock, [3, 21, 48, 3], pretrained,
                     progress, **kwargs)
 
 
-def iresnet200(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet200', IBasicBlock, [6, 26, 60, 6], pretrained,
+def iresnet200_v(pretrained=False, progress=True, **kwargs):
+    return _iresnet_v('iresnet200', IBasicBlock, [6, 26, 60, 6], pretrained,
                     progress, **kwargs)
+
+
+""" FRB version of IResNet
+"""
+def _iresnet(block, layers, fm_ops, pretrained, **kwargs):
+    model = IResNet(block, layers, fm_ops, **kwargs)
+    if pretrained:
+        raise ValueError('No pretrained model for iresnet')
+    return model
+
+def iresnet18(fm_ops,
+           pretrained=False,
+           dim_feature=512):
+    return _iresnet(IBasicBlock, [2, 2, 2, 2],
+                 fm_ops, pretrained,
+                 dim_feature=dim_feature)
+
+def iresnet34(fm_ops,
+           pretrained=False,
+           dim_feature=512):
+    return _iresnet(IBasicBlock, [3, 4, 6, 3],
+                 fm_ops, pretrained,
+                 dim_feature=dim_feature)
+
+def iresnet50(fm_ops,
+           pretrained=False,
+           dim_feature=512):
+    return _iresnet(IBasicBlock, [3, 4, 14, 3],
+                 fm_ops, pretrained,
+                 dim_feature=dim_feature)
 
 
 if __name__ == '__main__':
-    model = iresnet100(False, True, fp16=True).cuda()
-    image = torch.ones((2, 3, 112, 112)).cuda()
-    feature = model(image)
+
+    batch_size = 1
+
+    """ Prepare for Feature Masking Operators """
+    from backbones.fm import FMCnn, FMNone
+    heights = [56, 28, 14, 7]
+    f_channels = [64, 128, 256, 512]
+    s_channels = [18, 18, 18, 18]
+    fm_layers = [1, 1, 1, 1]
+
+    fm_ops = []
+    for i in range(4):
+        fm_type = fm_layers[i]
+        print('fm_type', i, '=', fm_type)
+        if fm_type == 0:
+            fm_ops.append(FMNone())
+        elif fm_type == 1:
+            fm_ops.append(FMCnn(
+                height=heights[i],
+                width=heights[i],
+                channel_f=f_channels[i]
+            ))
+        else:
+            raise ValueError
+
+    """ Prepare for Occlusion Segmentation Representations """
+    segs = [torch.randn(batch_size, 18, 56, 56),  # seg3
+            torch.randn(batch_size, 18, 28, 28),  # seg2
+            torch.randn(batch_size, 18, 14, 14),  # seg1
+            torch.randn(batch_size, 18, 7, 7),]  # seg0
+
+    """ Test for iresnet18 """
+    ires = iresnet18(
+        fm_ops=fm_ops,
+    )
+    img = torch.randn((batch_size, 3, 112, 112))
+    ires.eval()
+    feature = ires(img, segs)
     print(feature.shape)
+
+    import thop
+    flops, params = thop.profile(ires, inputs=(img, segs))
+    print('flops', flops / 1e9, 'params', params / 1e6)
