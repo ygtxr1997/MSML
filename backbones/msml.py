@@ -21,7 +21,9 @@ class MSML(nn.Module):
         self._prepare_frb(frb_type)
         self._prepare_osb(osb_type)
 
-        self.classification = nn.Linear(self.dim_feature, 1000, bias=False)
+        self.classification = nn.Linear(self.dim_feature, num_classes, bias=False)
+
+        self.fp16 = fp16
 
     def _prepare_shapes(self, frb_type, osb_type):
         """ We should know the output shapes of each stage in FRB and OSB """
@@ -53,7 +55,7 @@ class MSML(nn.Module):
                 ))
             else:
                 raise ValueError('FM Operators type error')
-        self.fm_ops = fm_ops
+        self.fm_ops = nn.ModuleList(fm_ops)
 
     def _prepare_frb(self, frb_type):
         if 'lightcnn' in frb_type:
@@ -70,10 +72,19 @@ class MSML(nn.Module):
             )
 
     def forward(self, x):
-        segs = self.osb(x)
-        feature = self.frb(x, segs)
-        x = self.classification(feature)
-        return x
+        seg_list = self.osb(x)  # [seg0, seg1, seg2, seg3, seg5] small to big
+        seg_list.reverse()  # [seg5, seg3, seg2, seg1, seg0]
+        segs = seg_list[1:]  # [seg3, seg2, seg1, seg0] big to small
+
+        with torch.cuda.amp.autocast(self.fp16):
+            feature = self.frb(x, segs)
+
+        feature = feature.float() if self.fp16 else feature
+        if self.training:
+            x = self.classification(feature)
+            return x
+        else:
+            return feature
 
 
 def _prepare_fm(self, fm_op, fm_layers):
@@ -92,3 +103,42 @@ def _prepare_fm(self, fm_op, fm_layers):
         else:
             fm_ops.append(fm_op())
     self.fm_ops = fm_ops
+
+
+if __name__ == '__main__':
+
+    """ 1. IResNet accepts RGB images """
+    # print('-------- Test for msml(iresnet-18, unet-r18, rgb-112) --------')
+    # msml = MSML(
+    #     frb_type='iresnet',
+    #     osb_type='unet',
+    #     fm_layers=[0, 1, 1, 0],
+    #     num_classes=98310,
+    #     fp16=True
+    # ).cuda()
+    # img = torch.zeros((1, 3, 112, 112)).cuda()
+    # msml.eval()
+    # out = msml(img)
+    # print(out.shape)
+    #
+    # import thop
+    # flops, params = thop.profile(msml, inputs=(img,))
+    # print('flops', flops / 1e9, 'params', params / 1e6)
+
+    """ 2. IResNet accepts Gray-Scale images """
+    print('-------- Test for msml(lightcnn, unet-r18, gray-128) --------')
+    msml = MSML(
+        frb_type='lightcnn',
+        osb_type='unet',
+        fm_layers=[0, 0, 0, 0],
+        num_classes=98310,
+        fp16=False
+    ).cuda()
+    img = torch.zeros((1, 1, 128, 128)).cuda()
+    msml.eval()
+    out = msml(img)
+    print(out.shape)
+
+    import thop
+    flops, params = thop.profile(msml, inputs=(img,))
+    print('flops', flops / 1e9, 'params', params / 1e6)

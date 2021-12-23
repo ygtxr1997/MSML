@@ -16,9 +16,9 @@ __all__ = ['lightcnn29',]
 
 
 model_dir = {
-    'LightCNN-9': '../pretrained/LightCNN_9Layers_checkpoint.pth.tar',
-    'LightCNN-29': '../pretrained/LightCNN_29Layers_checkpoint.pth.tar',
-    'LightCNN-29v2': '../pretrained/LightCNN_29Layers_V2_checkpoint.pth.tar'
+    'LightCNN-9': '/home/yuange/code/SelfServer/MSML/backbones/pretrained/LightCNN_9Layers_checkpoint.pth.tar',
+    'LightCNN-29': '/home/yuange/code/SelfServer/MSML/backbones/pretrained/LightCNN_29Layers_checkpoint.pth.tar',
+    'LightCNN-29v2': '/home/yuange/code/SelfServer/MSML/backbones/pretrained/LightCNN_29Layers_V2_checkpoint.pth.tar'
 }
 
 
@@ -245,7 +245,8 @@ def lightcnn29(fm_ops,
         if os.path.isfile(model_dir['LightCNN-29v2']):
             pre_trained_dict = torch.load(model_dir['LightCNN-29v2'])['state_dict']
         else:
-            raise FileNotFoundError
+            error_info = 'Make sure the file {' + model_dir['LightCNN-29v2'] + '} exists!'
+            raise FileNotFoundError(error_info)
 
         # get pretrained 'lightcnn' layers and insert to tmp
         tmp_dict = OrderedDict()
