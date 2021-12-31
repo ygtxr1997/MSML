@@ -8,6 +8,9 @@ from backbones.fm import FMCnn, FMNone
 
 
 class MSML(nn.Module):
+    frb_type_list = ['lightcnn',
+                     'iresnet18', 'iresnet34', 'iresnet50',]
+    osb_type_list = ['unet',]
     def __init__(self,
                  frb_type,
                  osb_type,
@@ -88,20 +91,27 @@ class MSML(nn.Module):
                 input_size=self.input_size,
             )
 
-    def forward(self, x):
+    def forward(self, x, ret_seg=False):
+        """ Part 1. OSB
+        The output order of OSB should be carefully processed.
+        """
         seg_list = self.osb(x)  # [seg0, seg1, seg2, seg3, seg5] small to big
         seg_list.reverse()  # [seg5, seg3, seg2, seg1, seg0]
+        final_seg = seg_list[0]  # seg5, the final segmentation for calculating seg_loss
         segs = seg_list[1:]  # [seg3, seg2, seg1, seg0] big to small
 
+        """ Part 2. FRB 
+        Note that FRB only returns latent feature rather than classification prediction.
+        """
         with torch.cuda.amp.autocast(self.fp16):
             feature = self.frb(x, segs)
 
         feature = feature.float() if self.fp16 else feature
         if self.training:
-            x = self.classification(feature)
-            return x
+            final_cls = self.classification(feature)
+            return final_cls, final_seg
         else:
-            return feature
+            return feature, final_seg
 
 
 if __name__ == '__main__':
@@ -124,7 +134,7 @@ if __name__ == '__main__':
     flops, params = thop.profile(msml, inputs=(img,))
     print('flops', flops / 1e9, 'params', params / 1e6)
 
-    """ 2. IResNet accepts Gray-Scale images """
+    """ 2. LightCNN accepts Gray-Scale images """
     print('-------- Test for msml(lightcnn, unet-r18, gray-128) --------')
     msml = MSML(
         frb_type='lightcnn',
