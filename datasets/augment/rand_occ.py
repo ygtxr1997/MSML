@@ -315,13 +315,89 @@ class RandomConnectedPolygon(object):
         return np.array((int(target_x), int(target_y)))
 
 
+""" Random Glasses Occlusion
+This transform is only used for training.
+Init Params:
+    - glasses_path: the path to glasses image folder
+    - occ_height: we should resize the glasses images into the same height (default: 40)
+    - occ_width: we should resize the glasses images into the same width (default: 89)
+    - height_scale: the resized images can be randomly rescaled by -h_s to +h_s (h_s >= 1.0, default: 1.1)
+    - width_scale: the resized images can be randomly rescaled by -w_s to +w_s (w_s >= 1.0, default: 1.1)
+"""
+class Glasses(object):
+    def __init__(self,
+                 glasses_path: str = 'occluder/glasses_crop/',
+                 occ_height: int = 40,
+                 occ_width: int = 80,
+                 height_scale: float = 1.1,
+                 width_scale: float = 1.1,
+                 ):
+        self.glasses_root = glasses_path
+        self.glasses_list = np.array(os.listdir(glasses_path))
+        self.glasses_num = len(self.glasses_list)
+
+        self.occ_height = occ_height
+        self.occ_width = occ_width
+        self.height_scale = height_scale
+        self.width_scale = width_scale
+
+        # Preload the image folder
+        self.object_imgs = np.zeros((self.glasses_num,
+                                     occ_height, occ_width, 4), dtype=np.uint8)  # (num, height, width, RGBA)
+        for idx in range(self.glasses_num):
+            object_path = os.path.join(self.glasses_root, self.glasses_list[idx])
+            object = Image.open(object_path).convert('RGBA')  # [w, h]: (125, 40+)
+            object = object.resize((occ_width, occ_height))
+            self.object_imgs[idx] = np.array(object, dtype=np.uint8)  # [h, w, c=4]
+
+    def __call__(self, img):
+        mode = img.mode  # 'L' or 'RGB'
+        height, width = img.size[1], img.size[0]
+
+        """ 1. Get an occlusion image from the preloaded list, and resize it randomly """
+        glasses = self.object_imgs[np.random.randint(0, self.glasses_num)]  # np-(h, w, RGBA)
+        glasses = Image.fromarray(glasses, mode='RGBA')  # PIL-(h, w, RGBA)
+        occ_width = int(self.occ_width * np.random.uniform(1 / self.width_scale, self.width_scale))  # w'
+        occ_height = int(self.occ_height * np.random.uniform(1 / self.height_scale, self.height_scale))  # h'
+        glasses = glasses.resize((occ_width, occ_height))  # PIL-(h', w', RGBA)
+
+        """ 2. Split Alpha channel and RGB channels, and convert RGB channels into img.mode """
+        alpha = np.array(glasses)[:, :, -1].astype(np.uint8)  # np-(h', w', A)
+        glasses = glasses.convert(mode)  # PIL-(h', w', mode)
+
+        """ 3. Generate top-left point (x, y) of occlusion """
+        x_offset = int((0.12 + np.random.randint(-5, 6) * 0.02) * width)
+        y_offset = int((0.3 + np.random.randint(-5, 6) * 0.01) * height)
+
+        """ 4. Surpass the face by occlusion, based on np.array """
+        face_arr = np.array(img)  # (H, W, mode)
+        glasses_arr = np.array(glasses)  # (h', w', mode)
+
+        face_crop = face_arr[y_offset: y_offset + occ_height,
+                             x_offset: x_offset + occ_width]  # Crop the face according to the glasses position
+        glasses_arr[alpha == 0] = face_crop[alpha == 0]  # 'Alpha == 0' denotes transparent pixel
+        face_arr[y_offset: y_offset + occ_height,
+                 x_offset: x_offset + occ_width] = glasses_arr  # Overlap, np-(H, W, mode)
+
+        """ 5. Get occluded face and occlusion mask """
+        img_glassesed = Image.fromarray(face_arr)  # PIL-(H, W, mode)
+
+        msk_shape = (height, width) if mode == 'L' else (height, width, 3)
+        msk = np.ones(msk_shape, dtype=np.uint8) * 255
+        glasses_arr[alpha != 0] = 0  # occluded
+        glasses_arr[alpha == 0] = 255  # clean
+        msk[y_offset: y_offset + occ_height,
+            x_offset: x_offset + occ_width] = glasses_arr
+        msk = Image.fromarray(msk).convert('L')
+
+        return img_glassesed, msk
 
 
 if __name__ == '__main__':
 
-    face = Image.open('Dan_Kellner_0001.jpg', 'r')
-    trans = RandomEllipse()
-    for idx in range(100):
+    face = Image.open('375_face.jpg', 'r')
+    trans = Glasses()
+    for idx in range(1000):
         ret, _ = trans(face)
         if idx < 15:
             ret.save('output_{}.jpg'.format(idx))
