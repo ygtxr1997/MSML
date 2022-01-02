@@ -1,5 +1,4 @@
 import os
-import time
 import copy
 
 import numpy as np
@@ -324,7 +323,7 @@ Init Params:
     - height_scale: the resized images can be randomly rescaled by -h_s to +h_s (h_s >= 1.0, default: 1.1)
     - width_scale: the resized images can be randomly rescaled by -w_s to +w_s (w_s >= 1.0, default: 1.1)
 """
-class Glasses(object):
+class RandomGlasses(object):
     def __init__(self,
                  glasses_path: str = 'occluder/glasses_crop/',
                  occ_height: int = 40,
@@ -393,11 +392,214 @@ class Glasses(object):
         return img_glassesed, msk
 
 
-if __name__ == '__main__':
+""" Random Scarf Occlusion
+This transform is only used for training.
+Init Params:
+    - glasses_path: the path to glasses image folder
+    - occ_height: we should resize the scarf images into the same height (default: 40)
+    - occ_width: we should resize the scarf images into the same width (default: 89)
+    - height_scale: the resized images can be randomly rescaled by -h_s to 1.0 (h_s >= 1.0, default: 1.1)
+    - width_scale: the resized images can be randomly rescaled by -w_s to 1.0 (w_s >= 1.0, default: 1.1)
+"""
+class RandomScarf(object):
+    def __init__(self,
+                 scarf_path: str = 'occluder/scarf_crop/',
+                 occ_height: int = 90,
+                 occ_width: int = 90,
+                 height_scale: float = 1.1,
+                 width_scale: float = 1.1,
+                 ):
+        self.scarf_root = scarf_path
+        self.scarf_list = np.array(os.listdir(scarf_path))
+        self.scarf_num = len(self.scarf_list)
 
-    face = Image.open('375_face.jpg', 'r')
-    trans = Glasses()
-    for idx in range(1000):
-        ret, _ = trans(face)
-        if idx < 15:
-            ret.save('output_{}.jpg'.format(idx))
+        self.occ_height = occ_height
+        self.occ_width = occ_width
+        self.height_scale = height_scale
+        self.width_scale = width_scale
+
+        # Preload the image folder
+        self.object_imgs = np.zeros((self.scarf_num,
+                                     occ_height, occ_width, 4), dtype=np.uint8)  # (num, height, width, RGBA)
+        for idx in range(self.scarf_num):
+            object_path = os.path.join(self.scarf_root, self.scarf_list[idx])
+            object = Image.open(object_path).convert('RGBA')
+            object = object.resize((occ_width, occ_height))
+            self.object_imgs[idx] = np.array(object)
+
+    def __call__(self, img):
+        mode = img.mode  # 'L' or 'RGB'
+        height, width = img.size[1], img.size[0]
+
+        """ 1. Get an occlusion image from the preloaded list, and resize it randomly """
+        scarf = self.object_imgs[np.random.randint(0, self.scarf_num)]
+        scarf = Image.fromarray(scarf, mode='RGBA')  # PIL-(h, w, RGBA)
+        occ_width = int(self.occ_width * np.random.uniform(1 / self.width_scale, 1.0))  # w'
+        occ_height = int(self.occ_height * np.random.uniform(1 / self.height_scale, 1.0))  # h'
+        scarf = scarf.resize((occ_width, occ_height))  # PIL-(h', w', RGBA)
+
+        """ 2. Split Alpha channel and RGB channels, and convert RGB channels into img.mode """
+        alpha = np.array(scarf)[:, :, -1].astype(np.uint8)  # np-(h', w', A)
+        scarf = scarf.convert(mode)  # PIL-(h', w', mode)
+
+        """ 3. Generate top-left point (x, y) of occlusion """
+        x_offset = int((0.1 + np.random.randint(-5, 5) * 0.01) * img.size[0])
+        y_offset = int((0.6 + np.random.randint(-5, 5) * 0.01) * img.size[0])
+
+        """ 4. Surpass the face by occlusion, based on np.array """
+        face_arr = np.array(img)
+        scarf_arr = np.array(scarf)
+
+        # color shift (may be useless)
+        # channel = 0 if mode == 'L' else 3
+        # for c in range(channel):
+        #     scarf_arr[c] = (scarf_arr[c] + np.random.randint(0, 256)) % 256
+
+        # crop the occlusion
+        scarf_arr = scarf_arr[: min(occ_height, height - y_offset),
+                              : min(occ_width, width - x_offset)]
+        alpha = alpha[: min(occ_height, height - y_offset),
+                      : min(occ_width, width - x_offset)]
+
+        # crop the face
+        face_crop = face_arr[y_offset: y_offset + scarf_arr.shape[0],
+                             x_offset: x_offset + scarf_arr.shape[1]]
+        face_crop[alpha != 0] = scarf_arr[alpha != 0]  # 'Alpha == 0' denotes transparent pixel
+        face_arr[y_offset: y_offset + scarf_arr.shape[0],
+                 x_offset: x_offset + scarf_arr.shape[1]] = face_crop  # Overlap, np-(H, W, mode)
+
+        """ 5. Get occluded face and occlusion mask """
+        img_scarfed = Image.fromarray(face_arr)  # PIL-(H, W, mode)
+
+        msk_shape = (img.size[1], img.size[0]) if mode == 'L' else (img.size[1], img.size[0], 3)
+        msk = np.ones(msk_shape, dtype=np.uint8) * 255
+        scarf_arr[alpha != 0] = 0  # occluded
+        scarf_arr[alpha == 0] = 255  # clean
+        msk[y_offset:y_offset + scarf_arr.shape[0], x_offset:x_offset + scarf_arr.shape[1]] = scarf_arr
+        msk = Image.fromarray(msk).convert('L')
+
+        return img_scarfed, msk
+
+
+""" Random Real-life Object Occlusion
+This transform can be used for training and testing.
+Init Params:
+    - object_path: the path to glasses image folder
+    - occ_height: we should resize and crop the object images into the same height (default: 40)
+    - occ_width: we should resize and crop the object images into the same width (default: 89)
+    - height_scale: the resized images can be randomly rescaled by 1.0 to +h_s (h_s >= 1.0, default: 2.0)
+    - width_scale: the resized images can be randomly rescaled by 1.0 to +w_s (w_s >= 1.0, default: 2.0)
+"""
+class RandomRealObject(object):
+    def __init__(self,
+                 object_path='occluder/object_train/',
+                 occ_height: int = 55,
+                 occ_width: int = 55,
+                 height_scale: float = 2.0,
+                 width_scale: float = 2.0,
+                 ):
+        self.object_root = object_path
+        self.object_list = np.array(os.listdir(object_path))
+        self.object_num = len(self.object_list)
+
+        self.occ_height = occ_height
+        self.occ_width = occ_width
+        self.height_scale = height_scale
+        self.width_scale = width_scale
+
+        # Preload the image folder
+        self.object_imgs = np.zeros((self.object_num,
+                                     occ_height, occ_width, 4), dtype=np.uint8)  # (num, height, width, RGBA)
+        for idx in range(self.object_num):
+            object_path = os.path.join(self.object_root, self.object_list[idx])
+            object = Image.open(object_path).convert('RGBA')
+
+            # rescale
+            from_width, from_height = object.size[0], object.size[1]
+            ratio = max(from_width / occ_width, from_height / occ_height)
+            object = object.resize((int(from_width / ratio),
+                                    int(from_height / ratio)))
+
+            # center crop
+            center_crop = transforms.CenterCrop((occ_width, occ_height))
+            object = center_crop(object)
+            self.object_imgs[idx] = np.array(object)
+
+    def __call__(self, img):
+        mode = img.mode  # 'L' or 'RGB'
+        height, width = img.size[1], img.size[0]
+
+        """ 1. Get an occlusion image from the preloaded list, and resize it randomly """
+        idx = np.random.randint(0, self.object_num)
+        object = self.object_imgs[idx]
+        object = Image.fromarray(object).convert('RGBA')
+        occ_width = int(self.occ_width * np.random.uniform(1.0, self.width_scale))  # w'
+        occ_height = int(self.occ_height * np.random.uniform(1.0, self.height_scale))  # h'
+        object = object.resize((occ_width, occ_height))  # PIL-(h', w', RGBA)
+
+        """ 2. Split Alpha channel and RGB channels, and convert RGB channels into img.mode """
+        alpha = np.array(object)[:, :, -1].astype(np.uint8)  # np-(h', w', A)
+        object = object.convert(mode)  # PIL-(h', w', mode)
+
+        """ 3. Generate top-left point (x, y) of occlusion """
+        x_offset = int((np.random.randint(15, 51) * 0.01) * width)  # [15%, 60%]
+        y_offset = int((np.random.randint(15, 51) * 0.01) * height)  # [15%, 60%]
+
+        """ 4. Surpass the face by occlusion, based on np.array """
+        face_arr = np.array(img)
+        object_arr = np.array(object)
+
+        # crop the occlusion
+        object_arr = object_arr[: min(occ_height, height - y_offset),
+                                : min(occ_width, width - x_offset)]
+        alpha = alpha[: min(occ_height, height - y_offset),
+                      : min(occ_width, width - x_offset)]
+
+        # crop the face
+        face_crop = face_arr[y_offset: y_offset + object_arr.shape[0],
+                             x_offset: x_offset + object_arr.shape[1]]
+        face_crop[alpha >= 1] = object_arr[alpha >= 1]
+        face_arr[y_offset: y_offset + object_arr.shape[0],
+                 x_offset: x_offset + object_arr.shape[1]] = face_crop
+
+        """ 5. Get occluded face and occlusion mask """
+        img_objected = Image.fromarray(face_arr)
+
+        msk_shape = (img.size[1], img.size[0]) if mode == 'L' else (img.size[1], img.size[0], 3)
+        msk = np.ones(msk_shape, dtype=np.uint8) * 255
+        object_arr[alpha != 0] = 0  # occluded
+        object_arr[alpha == 0] = 255  # clean
+        msk[y_offset:y_offset + object_arr.shape[0], x_offset:x_offset + object_arr.shape[1]] = object_arr
+        msk = Image.fromarray(msk).convert('L')
+
+        return img_objected, msk
+
+
+if __name__ == '__main__':
+    import time
+
+    """ 1. For RGB or L """
+    face = Image.open('375_face.jpg', 'r')  # .convert('L')
+    trans_list = [
+        NoneOcc(),
+        RandomRect(),
+        RandomEllipse(),
+        RandomConnectedPolygon(),
+        RandomGlasses(),
+        RandomScarf(),
+        RandomRealObject(),
+    ]
+
+    for trans_id, trans in enumerate(trans_list):
+        print('---------- {} ----------'.format(trans_id))
+        folder = 'trans_{}'.format(trans_id)
+        if not os.path.exists(folder):
+            os.mkdir(folder)
+
+        start = time.time()
+        for idx in range(1000):
+            ret, _ = trans(face)
+            img_name = 'output_{}.jpg'.format(idx)
+            if idx < 15:
+                ret.save(os.path.join(folder, img_name))
+        print('time cost: %d ms' % (int(round((time.time() - start) * 1000))))
