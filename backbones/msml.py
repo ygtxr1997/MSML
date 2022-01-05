@@ -8,9 +8,9 @@ from backbones.fm import FMCnn, FMNone
 
 
 class MSML(nn.Module):
-    frb_type_list = ['lightcnn',
-                     'iresnet18', 'iresnet34', 'iresnet50',]
-    osb_type_list = ['unet',]
+    frb_type_list = ('lightcnn',
+                     'iresnet18', 'iresnet34', 'iresnet50',)
+    osb_type_list = ('unet',)
     def __init__(self,
                  frb_type,
                  osb_type,
@@ -34,20 +34,20 @@ class MSML(nn.Module):
         if 'lightcnn' in frb_type:
             self.input_size = 128
             self.gray = True
-            self.heights = [64, 32, 16, 8]
-            self.f_channels = [48, 96, 192, 128]
+            self.heights = (64, 32, 16, 8)
+            self.f_channels = (48, 96, 192, 128)
             self.dim_feature = 256
         elif 'iresnet' in frb_type:
             self.input_size = 112
             self.gray = False
-            self.heights = [56, 28, 14, 7]
-            self.f_channels = [64, 128, 256, 512]
+            self.heights = (56, 28, 14, 7)
+            self.f_channels = (64, 128, 256, 512)
             self.dim_feature = 512
         else:
             raise ValueError('FRB type error')
 
         if 'unet' in osb_type:
-            self.s_channels = [18, 18, 18, 18]
+            self.s_channels = (18, 18, 18, 18)
         else:
             raise ValueError('OSB type error')
 
@@ -121,7 +121,7 @@ if __name__ == '__main__':
     msml = MSML(
         frb_type='iresnet18',
         osb_type='unet',
-        fm_layers=[1, 1, 1, 1],
+        fm_layers=(1, 1, 1, 1),
         num_classes=98310,
         fp16=True
     ).cuda()
@@ -139,7 +139,7 @@ if __name__ == '__main__':
     msml = MSML(
         frb_type='lightcnn',
         osb_type='unet',
-        fm_layers=[0, 0, 0, 0],
+        fm_layers=(0, 0, 0, 0),
         num_classes=98310,
         fp16=False
     ).cuda()
