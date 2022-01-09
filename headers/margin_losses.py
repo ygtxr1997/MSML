@@ -6,7 +6,7 @@ from torch.nn import Parameter
 
 import numpy as np
 
-__all__ = ['AMCosFace', ]
+__all__ = ['Softmax', 'AMCosFace', 'AMArcFace', ]
 
 
 MIN_NUM_PATCHES = 16

@@ -233,25 +233,34 @@ def _iresnet(block, layers, fm_ops, pretrained, **kwargs):
     return model
 
 def iresnet18(fm_ops,
-           pretrained=False,
-           dim_feature=512):
+              pretrained=False,
+              dim_feature=512,
+              dropout=0.):
     return _iresnet(IBasicBlock, [2, 2, 2, 2],
-                 fm_ops, pretrained,
-                 dim_feature=dim_feature)
+                    fm_ops, pretrained,
+                    dim_feature=dim_feature,
+                    dropout=dropout,
+                    )
 
 def iresnet34(fm_ops,
-           pretrained=False,
-           dim_feature=512):
+              pretrained=False,
+              dim_feature=512,
+              dropout=0.):
     return _iresnet(IBasicBlock, [3, 4, 6, 3],
-                 fm_ops, pretrained,
-                 dim_feature=dim_feature)
+                    fm_ops, pretrained,
+                    dim_feature=dim_feature,
+                    dropout=dropout,
+                    )
 
 def iresnet50(fm_ops,
-           pretrained=False,
-           dim_feature=512):
+              pretrained=False,
+              dim_feature=512,
+              dropout=0.):
     return _iresnet(IBasicBlock, [3, 4, 14, 3],
-                 fm_ops, pretrained,
-                 dim_feature=dim_feature)
+                    fm_ops, pretrained,
+                    dim_feature=dim_feature,
+                    dropout=dropout,
+                    )
 
 
 if __name__ == '__main__':

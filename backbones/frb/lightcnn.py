@@ -147,6 +147,7 @@ class network_29layers_v2(nn.Module):
                  layers,
                  fm_ops,
                  dim_feature=256,
+                 dropout=0.,
                  ):
         super(network_29layers_v2, self).__init__()
         self.conv1 = mfm(1, 48, 5, 1, 2)
@@ -159,7 +160,7 @@ class network_29layers_v2(nn.Module):
         self.block4 = self._make_layer(block, layers[3], 128, 128)
         self.group4 = group(128, 128, 3, 1, 1)
         self.fc = nn.Linear(8 * 8 * 128, dim_feature)
-        self.drop = nn.Dropout()
+        self.drop = nn.Dropout(p=dropout, inplace=True)
 
         """ Different from vanilla LightCNN,
         frb backbones only extract embedded features without classification layers
@@ -235,12 +236,16 @@ def LightCNN_29Layers_v2(**kwargs):
 """
 def lightcnn29(fm_ops,
                pretrained=True,
-               dim_feature=256):
+               dim_feature=256,
+               dropout=0.,
+               ):
     if pretrained:
         # customized model based on 'lightcnn'
         model = network_29layers_v2(resblock, [1, 2, 3, 4],
                                     fm_ops=fm_ops,
-                                    dim_feature=dim_feature)
+                                    dim_feature=dim_feature,
+                                    dropout=dropout,
+                                    )
 
         # load pretrained weight
         if os.path.isfile(model_dir['LightCNN-29v2']):

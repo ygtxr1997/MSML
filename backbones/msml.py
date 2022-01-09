@@ -6,17 +6,25 @@ from backbones.frb import lightcnn29
 from backbones.frb import iresnet18, iresnet34, iresnet50
 from backbones.fm import FMCnn, FMNone
 
+from headers import Softmax, AMCosFace, AMArcFace
+
+
+__all__ = ['MSML', ]
+
 
 class MSML(nn.Module):
     frb_type_list = ('lightcnn',
                      'iresnet18', 'iresnet34', 'iresnet50',)
     osb_type_list = ('unet',)
+    head_type_list = ('Softmax', 'AMArcFace', 'AMCosFace')
     def __init__(self,
-                 frb_type,
-                 osb_type,
-                 fm_layers,
-                 num_classes,
-                 fp16=False,
+                 frb_type: str,
+                 osb_type: str,
+                 fm_layers: tuple,
+                 num_classes: int,
+                 fp16: bool = False,
+                 header_type: str = 'Softmax',
+                 header_params: tuple = (64.0, 0.5, 0.0, 0.0),  # (s, m, a, k)
                  ):
         super(MSML, self).__init__()
         assert len(fm_layers) == 4
@@ -25,7 +33,8 @@ class MSML(nn.Module):
         self._prepare_frb(frb_type)
         self._prepare_osb(osb_type)
 
-        self.classification = nn.Linear(self.dim_feature, num_classes, bias=False)
+        self.num_classes = num_classes
+        self._prepare_header(header_type, header_params)
 
         self.fp16 = fp16
 
@@ -55,9 +64,9 @@ class MSML(nn.Module):
         fm_ops = []
         for i in range(4):
             fm_type = fm_layers[i]
-            if fm_type == 0:
+            if fm_type == 0:  # 0: don't use FM Operator
                 fm_ops.append(FMNone())
-            elif fm_type == 1:
+            elif fm_type == 1:  # 1: use CNN FM Operator
                 fm_ops.append(FMCnn(
                     height=self.heights[i],
                     width=self.heights[i],
@@ -91,6 +100,32 @@ class MSML(nn.Module):
                 input_size=self.input_size,
             )
 
+    def _prepare_header(self, head_type, header_params):
+        assert head_type in self.head_type_list
+        dim_in = self.dim_feature
+        dim_out = self.num_classes
+
+        """ Get hyper-params of header """
+        s, m, a, k = header_params
+
+        """ Choose the header """
+        if 'Softmax' in head_type:
+            self.classification = Softmax(dim_in, dim_out, device_id=None)
+        elif 'AMCosFace' in head_type:
+            self.classification = AMCosFace(dim_in, dim_out,
+                                            device_id=None,
+                                            s=s, m=m,
+                                            a=a, k=k,
+                                            )
+        elif 'AMArcFace' in head_type:
+            self.classification = AMArcFace(dim_in, dim_out,
+                                            device_id=None,
+                                            s=s, m=m,
+                                            a=a, k=k,
+                                            )
+        else:
+            raise ValueError('Header type error!')
+
     def forward(self, x, ret_seg=False):
         """ Part 1. OSB
         The output order of OSB should be carefully processed.
@@ -123,12 +158,14 @@ if __name__ == '__main__':
         osb_type='unet',
         fm_layers=(1, 1, 1, 1),
         num_classes=98310,
-        fp16=True
+        fp16=True,
+        header_type='AMCosFace',
+        header_params=(64.0, 0.4, 0.0, 0.0)
     ).cuda()
     img = torch.zeros((1, 3, 112, 112)).cuda()
     msml.eval()
-    out = msml(img)
-    print(out.shape)
+    pred_cls, pred_seg = msml(img)
+    print(pred_cls.shape, pred_seg.shape)
 
     import thop
     flops, params = thop.profile(msml, inputs=(img,))
@@ -141,12 +178,14 @@ if __name__ == '__main__':
         osb_type='unet',
         fm_layers=(0, 0, 0, 0),
         num_classes=98310,
-        fp16=False
+        fp16=False,
+        header_type='AMArcFace',
+        header_params=(64.0, 0.5, 0.0, 0.0)
     ).cuda()
     img = torch.zeros((1, 1, 128, 128)).cuda()
     msml.eval()
-    out = msml(img)
-    print(out.shape)
+    pred_cls, pred_seg = msml(img)
+    print(pred_cls.shape, pred_seg.shape)
 
     import thop
     flops, params = thop.profile(msml, inputs=(img,))
