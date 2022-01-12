@@ -7,6 +7,7 @@ from torch.utils import data
 from torchvision import transforms
 
 import numpy as np
+import PIL.Image as Image
 
 from datasets.augment.rand_occ import NoneOcc
 from datasets.augment.rand_occ import RandomRect, RandomEllipse, RandomConnectedPolygon
@@ -71,9 +72,9 @@ class FaceByRandOccMask(data.Dataset):
             RandomRect(),
             RandomEllipse(),
             RandomConnectedPolygon(),
-            RandomGlasses('./augment/occluder/glasses_crop'),
-            RandomScarf('./augment/occluder/scarf_crop'),
-            RandomRealObject('./augment/occluder/object_train'),
+            RandomGlasses('./datasets/augment/occluder/glasses_crop'),
+            RandomScarf('./datasets/augment/occluder/scarf_crop'),
+            RandomRealObject('./datasets/augment/occluder/object_train'),
         )
 
         """ Convert face and mask to tensor """

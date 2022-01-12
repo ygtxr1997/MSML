@@ -8,6 +8,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 import torch.utils.data.distributed
 from torch.nn.utils import clip_grad_norm_
+from torch.cuda import amp
 
 import utils
 import backbones
@@ -54,6 +55,10 @@ def main(args):
         os.makedirs(cfg.output)
     else:
         time.sleep(2)
+    import shutil
+    shutil.copy('config.yaml', cfg.output)
+    if rank == 0:
+        print(cfg)
 
     """ Init Logger """
     log_root = logging.getLogger()
@@ -74,7 +79,6 @@ def main(args):
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         trainset, shuffle=True)
     nw = cfg.nw
-    print('====> num_workers:', nw)
     train_loader = DataLoaderX(
         local_rank=local_rank, dataset=trainset, batch_size=cfg.batch_size,
         sampler=train_sampler, num_workers=nw, pin_memory=True, drop_last=True)
@@ -91,7 +95,9 @@ def main(args):
         header_type=cfg.header_type,
         header_params=cfg.header_params,
         num_classes=cfg.num_classes,
-        fp16=cfg.fp16
+        fp16=cfg.fp16,
+        dropout=dropout,
+        use_osb=cfg.use_osb,
     ).to(local_rank)
 
     """ Load Pretrained Weights """
@@ -127,8 +133,21 @@ def main(args):
     # awl.train()
 
     """ Init Optimizer """
+    params = []
+    for name, value in backbone.named_parameters():
+        # 1. occlusion segmentation branch
+        if 'osb' in name:
+            # osb uses a fixed learning rate: 0.01 for batch size 512
+            params += [{'params': value, 'lr': 0.01 / 512 * cfg.batch_size * world_size}]
+        # 2. face recognition branch
+        else:
+            if 'classification' in name and cfg.pretrained:
+                # fc layers need higher learning rate
+                params += [{'params': value, 'lr': 10 * cfg.lr / 512 * cfg.batch_size * world_size}]
+            else:
+                params += [{'params': value}]
     opt_backbone = torch.optim.SGD(
-        params=[{'params': backbone.parameters()}],
+        params=params,
         lr=cfg.lr / 512 * cfg.batch_size * world_size,
         momentum=cfg.momentum, weight_decay=cfg.weight_decay)
     # opt_backbone = torch.optim.AdamW(
@@ -152,11 +171,13 @@ def main(args):
 
     """ Calculate Total Training Steps """
     start_epoch = 0
-    total_step = int(len(trainset) / cfg.batch_size / world_size * cfg.num_epoch)
+    total_step = int(len(trainset) / cfg.batch_size / world_size *
+                     (cfg.num_epoch - args.resume))
     if rank is 0: logging.info("Total Step is: %d" % total_step)
 
     """ Callback Functions """
-    callback_verification = CallBackVerification(8000, rank, cfg.val_targets, cfg.rec)
+    callback_verification = CallBackVerification(8000, rank, cfg.val_targets, cfg.rec,
+                                                 image_size=cfg.out_size, is_gray=cfg.is_gray)
     callback_logging = CallBackLogging(50, rank, total_step, cfg.batch_size, world_size, None)
     callback_checkpoint = CallBackModelCheckpoint(rank, cfg.output)
 
@@ -172,38 +193,32 @@ def main(args):
     seg_criterion = StructureConsensuLossFunction(10.0, 5.0, 'idx', 'idx')
     cls_criterion = torch.nn.CrossEntropyLoss()
 
-    from torch.cuda import amp
-    scaler = amp.GradScaler(init_scale=cfg.batch_size,
-                            growth_interval=100, enabled=cfg.fp16)
-
+    """ Training """
     for epoch in range(start_epoch, cfg.num_epoch):
         train_sampler.set_epoch(epoch)
         if epoch < args.resume:
-            print('=====> skip epoch %d' % (epoch))
+            if rank == 0:
+                print('=====> skip epoch %d' % (epoch))
             scheduler_backbone.step()
             continue
-        for step, (img, msk, label) in enumerate(train_loader):
-        # for step, (img, label) in enumerate(train_loader):
+        for step, (img, msk, label) in enumerate(train_loader):  # Read original and masked face mxnet dataset
             global_step += 1
-            # if global_step % 100 == 0:
-            #     print('rank:', rank, time.strftime("[%Y-%m-%d-%H_%M_%S]", time.localtime()), global_step)
 
             """ op1: full classes """
             with amp.autocast(cfg.fp16):
-                if args.network[:3] == 'dpt':
-                    final_id, msk_final = backbone(img, label)
+                final_cls, final_seg = backbone(img, label)
+
+                if cfg.use_osb:
                     with torch.no_grad():
                         msk_cc_var = Variable(msk.clone().cuda(non_blocking=True))
-                    seg_loss = seg_criterion(msk_final, msk_cc_var, msk)
-                elif args.network[:2] == 'ft':
-                    final_id = backbone(img, label)
+                    seg_loss = seg_criterion(final_seg, msk_cc_var, msk)
+                else:
                     seg_loss = 0.
 
-                cls_loss = cls_criterion(final_id, label)
+                cls_loss = cls_criterion(final_cls, label)
 
-                l1 = cfg.l1
-                total_loss = cls_loss + l1 * seg_loss
-                # total_loss = awl(cls_loss, seg_loss, rank=rank)
+                total_loss = cls_loss + cfg.lambda1 * seg_loss
+                # total_loss = awl(cls_loss, seg_loss, rank=rank)  # Adaptive Weighted Loss
 
             if cfg.fp16:
                 grad_scaler.scale(total_loss).backward()
@@ -262,7 +277,7 @@ def main(args):
             if global_step % 100 == 0 and rank == 0:
                 logging.info('[exp_%d], seg_loss=%.4f, cls_loss=%.4f, scale=%.4f, lr=%.4f, l1=%.4f, '
                       'num_workers=%d'
-                      % (cfg.exp_id, seg_loss, loss_1.avg, scaler.get_scale(), cfg.lr, l1, nw))
+                      % (cfg.exp_id, seg_loss, loss_1.avg, grad_scaler.get_scale(), cfg.lr, cfg.lambda1, nw))
 
             loss.update(loss_v, 1)
             callback_logging(global_step, loss, epoch, cfg.fp16, grad_scaler)
@@ -273,7 +288,7 @@ def main(args):
                     lr = param_group['lr']
                 print(lr)
 
-        callback_checkpoint(global_step, backbone, module_partial_fc, awloss=None)
+        callback_checkpoint(global_step, backbone, None, awloss=None)
         scheduler_backbone.step()
         # scheduler_pfc.step()
     dist.destroy_process_group()

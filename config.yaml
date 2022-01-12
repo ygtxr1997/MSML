@@ -1,0 +1,26 @@
+# 1. dataset
+dataset: webface  # 'webface', 'ms1m-retinaface-t2'
+
+# 2. training recipe
+fp16: true
+batch_size: 128
+
+# 3. model setting
+frb_type: lightcnn  # 'lightcnn', 'iresnet18'
+osb_type: unet  # 'unet'
+use_osb: true
+fm_layers:  # (fm1, fm2, fm3, fm4)
+  - 1
+  - 1
+  - 1
+  - 1
+header_type: Softmax  # 'Softmax', 'AMCosFace', 'AMArcFace'
+header_params:
+  - 64.0
+  - 0.4
+  - 0.0
+  - 0.0
+
+# 4. experiment record
+exp_id: 1
+output_prefix: light_msml

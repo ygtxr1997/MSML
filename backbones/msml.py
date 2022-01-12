@@ -25,18 +25,21 @@ class MSML(nn.Module):
                  fp16: bool = False,
                  header_type: str = 'Softmax',
                  header_params: tuple = (64.0, 0.5, 0.0, 0.0),  # (s, m, a, k)
+                 dropout: float = 0.,
+                 use_osb: bool = True,
                  ):
         super(MSML, self).__init__()
         assert len(fm_layers) == 4
         self._prepare_shapes(frb_type, osb_type)
         self._prepare_fm(fm_layers)
-        self._prepare_frb(frb_type)
+        self._prepare_frb(frb_type, dropout)
         self._prepare_osb(osb_type)
 
         self.num_classes = num_classes
         self._prepare_header(header_type, header_params)
 
         self.fp16 = fp16
+        self.use_osb = use_osb
 
     def _prepare_shapes(self, frb_type, osb_type):
         """ We should know the output shapes of each stage in FRB and OSB """
@@ -76,18 +79,19 @@ class MSML(nn.Module):
                 raise ValueError('FM Operators type error')
         self.fm_ops = fm_ops  # should be a 'List'
 
-    def _prepare_frb(self, frb_type):
+    def _prepare_frb(self, frb_type, dropout=0.):
         if 'lightcnn' in frb_type:
             self.frb = lightcnn29(
                 self.fm_ops,
+                dropout=dropout,
             )
         elif 'iresnet' in frb_type:
             if '18' in frb_type:
-                self.frb = iresnet18(self.fm_ops)
+                self.frb = iresnet18(self.fm_ops, dropout=dropout,)
             elif '34' in frb_type:
-                self.frb = iresnet34(self.fm_ops)
+                self.frb = iresnet34(self.fm_ops, dropout=dropout,)
             elif '50' in frb_type:
-                self.rb = iresnet50(self.fm_ops)
+                self.rb = iresnet50(self.fm_ops, dropout=dropout,)
             else:
                 error_info = 'IResNet type {} not found'.format(frb_type)
                 raise ValueError(error_info)
@@ -126,14 +130,18 @@ class MSML(nn.Module):
         else:
             raise ValueError('Header type error!')
 
-    def forward(self, x, ret_seg=False):
+    def forward(self, x, label=None, ):
         """ Part 1. OSB
         The output order of OSB should be carefully processed.
         """
-        seg_list = self.osb(x)  # [seg0, seg1, seg2, seg3, seg5] small to big
-        seg_list.reverse()  # [seg5, seg3, seg2, seg1, seg0]
-        final_seg = seg_list[0]  # seg5, the final segmentation for calculating seg_loss
-        segs = seg_list[1:]  # [seg3, seg2, seg1, seg0] big to small
+        if self.use_osb:
+            seg_list = self.osb(x)  # [seg0, seg1, seg2, seg3, seg5] small to big
+            seg_list.reverse()  # [seg5, seg3, seg2, seg1, seg0]
+            final_seg = seg_list[0]  # seg5, the final segmentation for calculating seg_loss
+            segs = seg_list[1:]  # [seg3, seg2, seg1, seg0] big to small
+        else:
+            segs = (None, None, None, None)
+            final_seg = None
 
         """ Part 2. FRB 
         Note that FRB only returns latent feature rather than classification prediction.
@@ -143,7 +151,7 @@ class MSML(nn.Module):
 
         feature = feature.float() if self.fp16 else feature
         if self.training:
-            final_cls = self.classification(feature)
+            final_cls = self.classification(feature, label)
             return final_cls, final_seg
         else:
             return feature, final_seg

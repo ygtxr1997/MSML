@@ -7,11 +7,12 @@ import torch
 
 from eval import verification
 from utils.utils_logging import AverageMeter
-from tricks.partial_fc import PartialFC
+# from tricks.partial_fc import PartialFC
 
 
 class CallBackVerification(object):
-    def __init__(self, frequent, rank, val_targets, rec_prefix, image_size=(112, 112)):
+    def __init__(self, frequent, rank, val_targets, rec_prefix, image_size=(112, 112),
+                 is_gray=False):
         self.frequent: int = frequent
         self.rank: int = rank
         self.highest_acc: float = 0.0
@@ -20,13 +21,15 @@ class CallBackVerification(object):
         self.ver_name_list: List[str] = []
         if self.rank is 0:
             self.init_dataset(val_targets=val_targets, data_dir=rec_prefix, image_size=image_size)
+        self.is_gray = is_gray
 
     def ver_test(self, backbone: torch.nn.Module, global_step: int):
         results = []
         for i in range(len(self.ver_list)):
             backbone.eval()
             acc1, std1, acc2, std2, xnorm, embeddings_list = verification.test(
-                self.ver_list[i], backbone, 10, 10)
+                self.ver_list[i], backbone, 10, 10,
+                is_gray=self.is_gray)
             backbone.train()
             logging.info('[%s][%d]XNorm: %f' % (self.ver_name_list[i], global_step, xnorm))
             logging.info('[%s][%d]Accuracy-Flip: %1.5f+-%1.5f' % (self.ver_name_list[i], global_step, acc2, std2))
@@ -101,7 +104,10 @@ class CallBackModelCheckpoint(object):
         self.rank: int = rank
         self.output: str = output
 
-    def __call__(self, global_step, backbone: torch.nn.Module, partial_fc: PartialFC = None,
+    def __call__(self,
+                 global_step,
+                 backbone: torch.nn.Module,
+                 partial_fc=None,
                  awloss=None,):
         print('CallBackModelCheckpoint...')
         if global_step > 100 and self.rank is 0:
