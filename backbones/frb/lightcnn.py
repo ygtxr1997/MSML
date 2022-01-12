@@ -249,7 +249,8 @@ def lightcnn29(fm_ops,
 
         # load pretrained weight
         if os.path.isfile(model_dir['LightCNN-29v2']):
-            pre_trained_dict = torch.load(model_dir['LightCNN-29v2'])['state_dict']
+            pre_trained_dict = torch.load(model_dir['LightCNN-29v2'],
+                                          map_location=torch.device('cpu'))['state_dict']
         else:
             error_info = 'Make sure the file {' + model_dir['LightCNN-29v2'] + '} exists!'
             raise FileNotFoundError(error_info)

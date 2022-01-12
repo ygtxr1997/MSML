@@ -139,13 +139,22 @@ def main(args):
         if 'osb' in name:
             # osb uses a fixed learning rate: 0.01 for batch size 512
             params += [{'params': value, 'lr': 0.01 / 512 * cfg.batch_size * world_size}]
+
         # 2. face recognition branch
         else:
-            if 'classification' in name and cfg.pretrained:
-                # fc layers need higher learning rate
+            # from scratch (lr = 0.1)
+            if not cfg.pretrained:
+                params += [{'params': value}]
+                continue
+
+            # pretrained (lr = 0.001)
+            if 'classification' in name:  # fc layers need higher learning rate
                 params += [{'params': value, 'lr': 10 * cfg.lr / 512 * cfg.batch_size * world_size}]
+            elif 'fm_ops' in name:  # fm operators are always trained from scratch
+                params += [{'params': value, 'lr': 0.1 / 512 * cfg.batch_size * world_size}]
             else:
                 params += [{'params': value}]
+
     opt_backbone = torch.optim.SGD(
         params=params,
         lr=cfg.lr / 512 * cfg.batch_size * world_size,
