@@ -98,6 +98,7 @@ def main(args):
         fp16=cfg.fp16,
         dropout=dropout,
         use_osb=cfg.use_osb,
+        fm_params=cfg.fm_params,
     ).to(local_rank)
 
     """ Load Pretrained Weights """

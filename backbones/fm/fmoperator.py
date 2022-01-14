@@ -68,6 +68,19 @@ class resblock_bottle(nn.Module):  # bottle neck
         return out
 
 
+def arith_add(face: torch.tensor, mask: torch.tensor):
+    return face + mask
+
+def arith_sub(face: torch.tensor, mask: torch.tensor):
+    return face - mask
+
+def arith_div(face: torch.tensor, mask: torch.tensor):
+    return face / mask
+
+def arith_mul(face: torch.tensor, mask: torch.tensor):
+    return face * mask
+
+
 class FMCnn(nn.Module):
     def __init__(self, height,
                  width,
@@ -75,6 +88,7 @@ class FMCnn(nn.Module):
                  kernel_size=3,
                  resblocks=2,
                  activation='tanh',
+                 arith_strategy='add',
                  ):
         super(FMCnn, self).__init__()
 
@@ -100,6 +114,15 @@ class FMCnn(nn.Module):
         }
         self.mask_norm = act_dict[activation]
 
+        """ Part4. Arithmetic Strategy """
+        arithmetic = {
+            'add': arith_add,
+            'sub': arith_sub,
+            'div': arith_div,
+            'mul': arith_mul,
+        }
+        self.arith = arithmetic[arith_strategy]
+
     def _make_resblocks(self, block, num_blocks, in_channels, out_channels):
         layers = []
         for i in range(0, num_blocks):
@@ -116,7 +139,9 @@ class FMCnn(nn.Module):
         x = torch.cat((yf, yo), dim=1)
         x = self.same_conv(x)
         x = self.res_block(x)
-        x = self.mask_norm(x) + identity
+        x = self.mask_norm(x)
+        x = self.arith(identity, x)
+        x += identity
         return x
 
 

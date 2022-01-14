@@ -14,6 +14,11 @@ fm_layers:  # (fm1, fm2, fm3, fm4)
   - 1
   - 1
   - 1
+fm_params:  # (kernel_size, num_res, act, arith)
+  - 3  # 3, 1
+  - 2  # 0, 1, 2
+  - 'sigmoid'  # 'tanh', 'sigmoid'
+  - 'add'  # 'add', 'sub', 'div', 'mul'
 header_type: Softmax  # 'Softmax', 'AMCosFace', 'AMArcFace'
 header_params:
   - 64.0

@@ -23,6 +23,7 @@ class MSML(nn.Module):
                  fm_layers: tuple,
                  num_classes: int,
                  fp16: bool = False,
+                 fm_params: tuple = (3, 2, 'tanh', 'add'),  # (S, N, act, arith)
                  header_type: str = 'Softmax',
                  header_params: tuple = (64.0, 0.5, 0.0, 0.0),  # (s, m, a, k)
                  dropout: float = 0.,
@@ -31,7 +32,7 @@ class MSML(nn.Module):
         super(MSML, self).__init__()
         assert len(fm_layers) == 4
         self._prepare_shapes(frb_type, osb_type)
-        self._prepare_fm(fm_layers)
+        self._prepare_fm(fm_layers, fm_params)
         self._prepare_frb(frb_type, dropout)
         self._prepare_osb(osb_type)
 
@@ -63,17 +64,22 @@ class MSML(nn.Module):
         else:
             raise ValueError('OSB type error')
 
-    def _prepare_fm(self, fm_layers):
+    def _prepare_fm(self, fm_layers, fm_params):
         fm_ops = []
         for i in range(4):
             fm_type = fm_layers[i]
             if fm_type == 0:  # 0: don't use FM Operator
                 fm_ops.append(FMNone())
             elif fm_type == 1:  # 1: use CNN FM Operator
+                kernel_size, num_res, act, arith = fm_params
                 fm_ops.append(FMCnn(
                     height=self.heights[i],
                     width=self.heights[i],
-                    channel_f=self.f_channels[i]
+                    channel_f=self.f_channels[i],
+                    kernel_size=kernel_size,
+                    resblocks=num_res,
+                    activation=act,
+                    arith_strategy=arith,
                 ))
             else:
                 raise ValueError('FM Operators type error')

@@ -56,7 +56,7 @@ def config_dataset():
         cfg.num_classes = 10572
         cfg.num_epoch = 34
         cfg.warmup_epoch = -1
-        cfg.val_targets = [] #['lfw', 'cfp_fp', 'agedb_30']
+        cfg.val_targets = ['lfw', 'cfp_fp', 'agedb_30']
 
         def lr_step_func(epoch):
             return ((epoch + 1) / (4 + 1)) ** 2 if epoch < cfg.warmup_epoch else 0.1 ** len(
