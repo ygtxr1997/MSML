@@ -126,8 +126,8 @@ class RandomRect(object):
         img_occ = Image.fromarray(img_occ)
 
         msk = np.ones((height, width), dtype=np.uint8) * 255  # white denotes no occlusion
-        msk[occ_randy:occ_randy + height,
-            occ_randx:occ_randx + width] = 0  # black denotes occlusion
+        msk[occ_randy:occ_randy + occ_height,
+            occ_randx:occ_randx + occ_width] = 0  # black denotes occlusion
         msk = Image.fromarray(msk)
 
         return img_occ, msk
