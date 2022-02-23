@@ -330,6 +330,66 @@ class Msk2Tenser(object):
         return msk
 
 
+""" MXNet binary dataset reader. 
+Refer to https://github.com/deepinsight/insightface.
+"""
+import pickle
+from typing import List
+from mxnet import ndarray as nd
+class ReadMXNet(object):
+    def __init__(self, val_targets, rec_prefix, image_size=(112, 112)):
+        self.ver_list: List[object] = []
+        self.ver_name_list: List[str] = []
+        self.rec_prefix = rec_prefix
+        self.val_targets = val_targets
+
+    def init_dataset(self, val_targets, data_dir, image_size):
+        for name in val_targets:
+            path = os.path.join(data_dir, name + ".bin")
+            if os.path.exists(path):
+                data_set = self.load_bin(path, image_size)
+                self.ver_list.append(data_set)
+                self.ver_name_list.append(name)
+
+    def load_bin(self, path, image_size):
+        try:
+            with open(path, 'rb') as f:
+                bins, issame_list = pickle.load(f)  # py2
+        except UnicodeDecodeError as e:
+            with open(path, 'rb') as f:
+                bins, issame_list = pickle.load(f, encoding='bytes')  # py3
+        data_list = []
+        # for flip in [0, 1]:
+        #     data = torch.empty((len(issame_list) * 2, 3, image_size[0], image_size[1]))
+        #     data_list.append(data)
+        for idx in range(len(issame_list) * 2):
+            _bin = bins[idx]
+            img = mx.image.imdecode(_bin)
+            if img.shape[1] != image_size[0]:
+                img = mx.image.resize_short(img, image_size[0])
+            img = nd.transpose(img, axes=(2, 0, 1))  # (C, H, W)
+
+            img = nd.transpose(img, axes=(1, 2, 0))  # (H, W, C)
+            import PIL.Image as Image
+            fig = Image.fromarray(img.asnumpy(), mode='RGB')
+            data_list.append(fig)
+            # data_list[flip][idx][:] = torch.from_numpy(img.asnumpy())
+            if idx % 1000 == 0:
+                print('loading bin', idx)
+
+            # # save img to '/home/yuange/dataset/LFW/rgb-arcface'
+            # img = nd.transpose(img, axes=(1, 2, 0))  # (H, W, C)
+            # # save_name = 'ind_' + str(idx) + '.bmp'
+            # # import os
+            # # save_name = os.path.join('/home/yuange/dataset/LFW/rgb-arcface', save_name)
+            # import PIL.Image as Image
+            # fig = Image.fromarray(img.asnumpy(), mode='RGB')
+            # # fig.save(save_name)
+
+        print('load finished', len(data_list))
+        return data_list, issame_list
+
+
 if __name__ == '__main__':
 
     import PIL.Image as Image
