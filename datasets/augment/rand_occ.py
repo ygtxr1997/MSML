@@ -18,10 +18,11 @@ Init Params:
     - lo: lowest ratio (%) in range [lo, hi)
     - hi: highest ratio (%) in range [lo, hi)
     - fill: 'black' means black square;
+            'white' means white square;
             'gauss' means Gaussian noise square.
 """
 class RandomBlock(object):
-    fill_list = ['black', 'gauss',]
+    fill_list = ['black', 'white', 'gauss',]
     def __init__(self,
                  lo: int,
                  hi: int,
@@ -47,6 +48,8 @@ class RandomBlock(object):
         block_width = int((ratio * width * width) ** 0.5)
         if self.fill == 'black':
             occ = Image.fromarray(np.zeros([block_width, block_width], dtype=np.uint8))
+        elif self.fill == 'white':
+            occ = Image.fromarray(np.ones([block_width, block_width], dtype=np.uint8) * 255)
         elif self.fill == 'gauss':
             if img.mode == 'L':
                 occ = Image.fromarray(np.random.randn(block_width, block_width) * 255)
