@@ -3,17 +3,17 @@ from easydict import EasyDict as edict
 
 with open('config.yaml') as f:
     loaded = yaml.safe_load(f)
-cfg = edict(loaded)
+conf = edict(loaded)
 
 """ Main Function of Initializing Config """
-def config_init():
-    config_dataset()
-    config_recipe()
-    config_model()
-    config_exp()
+def config_init(cfg: edict):
+    config_dataset(cfg)
+    config_recipe(cfg)
+    config_model(cfg)
+    config_exp(cfg)
 
 """ 1. Dataset """
-def config_dataset():
+def config_dataset(cfg: edict):
 
     cfg.is_gray = False
     cfg.out_size = (112, 112)
@@ -64,7 +64,7 @@ def config_dataset():
         cfg.lr_func = lr_step_func
 
 """ 2. Training Recipe """
-def config_recipe():
+def config_recipe(cfg: edict):
     # cfg.fp16 = True
     cfg.momentum = 0.9
     cfg.weight_decay = 5e-4
@@ -74,7 +74,7 @@ def config_recipe():
     cfg.lambda1 = 1  # l_total = l_cls + lambda1 * l_seg
 
 """ 3. Model Setting """
-def config_model():
+def config_model(cfg: edict):
     """ FRB, OSB, FM Operators """
     # cfg.frb_type = 'lightcnn' # 'iresnet18'
     cfg.pretrained = False
@@ -86,6 +86,7 @@ def config_model():
     # cfg.header_type = 'Softmax'
     # cfg.header_params = (64.0, 0.4, 0.0, 0.0)  # (s, m, a, k)
     cfg.header_params = tuple(cfg.header_params)
+    cfg.dim_feature = 512
     """ PartialFC """
     cfg.sample_rate = 1
 
@@ -95,22 +96,23 @@ def config_model():
         cfg.use_norm = False
         cfg.pretrained = True
         cfg.lr = 0.001  # 0.001 for pretrained model of batch size 512
+        cfg.dim_feature = 256
 
 """ 4. Experiment Record """
-def config_exp():
+def config_exp(cfg: edict):
     # cfg.exp_id = 1
     cfg.output = cfg.output_prefix + '_' + str(cfg.exp_id)
     print('output path: ', cfg.output)
 
 """ yaml to edict """
-def load_yaml():
-    with open('config.yaml') as f:
+def load_yaml(file_name: str):
+    with open(file_name) as f:
         loaded = yaml.safe_load(f)
     loaded = edict(loaded)
     return loaded
 
 
 if __name__ == '__main__':
-    print(cfg)
+    print(conf)
     config_init()
-    print(cfg)
+    print(conf)
