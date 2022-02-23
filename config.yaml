@@ -3,12 +3,12 @@ dataset: webface  # 'webface', 'ms1m-retinaface-t2'
 
 # 2. training recipe
 fp16: true
-batch_size: 128
+batch_size: 80
 
 # 3. model setting
-frb_type: lightcnn  # 'lightcnn', 'iresnet18'
+frb_type: iresnet50  # 'lightcnn', 'iresnet18'
 osb_type: unet  # 'unet'
-use_osb: true
+use_osb: ture  # ture, false
 fm_layers:  # (fm1, fm2, fm3, fm4)
   - 1
   - 1
@@ -18,14 +18,14 @@ fm_params:  # (kernel_size, num_res, act, arith)
   - 3  # 3, 1
   - 2  # 0, 1, 2
   - 'sigmoid'  # 'tanh', 'sigmoid'
-  - 'add'  # 'add', 'sub', 'div', 'mul'
-header_type: Softmax  # 'Softmax', 'AMCosFace', 'AMArcFace'
+  - 'sub'  # 'add', 'sub', 'div', 'mul'
+header_type: AMArcFace  # 'Softmax', 'AMCosFace', 'AMArcFace'
 header_params:
   - 64.0
-  - 0.4
+  - 0.48
   - 0.0
   - 0.0
 
 # 4. experiment record
-exp_id: 1
-output_prefix: light_msml
+exp_id: 3
+output_prefix: ires50_msml
