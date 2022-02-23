@@ -97,7 +97,7 @@ class MSML(nn.Module):
             elif '34' in frb_type:
                 self.frb = iresnet34(self.fm_ops, dropout=dropout,)
             elif '50' in frb_type:
-                self.rb = iresnet50(self.fm_ops, dropout=dropout,)
+                self.frb = iresnet50(self.fm_ops, dropout=dropout,)
             else:
                 error_info = 'IResNet type {} not found'.format(frb_type)
                 raise ValueError(error_info)
