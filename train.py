@@ -12,7 +12,7 @@ from torch.cuda import amp
 
 import utils
 import backbones
-from config import cfg, config_init
+from config import conf, config_init
 from datasets.dataloaderx import DataLoaderX
 from datasets.load_dataset import FaceByRandOccMask
 from headers.partial_fc import PartialFC
@@ -50,67 +50,67 @@ def main(args):
     torch.cuda.set_device(local_rank)
 
     """ Init Config """
-    config_init()
-    if not os.path.exists(cfg.output) and rank is 0:
-        os.makedirs(cfg.output)
+    config_init(conf)
+    if not os.path.exists(conf.output) and rank is 0:
+        os.makedirs(conf.output)
     else:
         time.sleep(2)
     import shutil
-    shutil.copy('config.yaml', cfg.output)
+    shutil.copy('config.yaml', conf.output)
     if rank == 0:
-        print(cfg)
+        print(conf)
 
     """ Init Logger """
     log_root = logging.getLogger()
-    init_logging(log_root, rank, cfg.output)
+    init_logging(log_root, rank, conf.output)
 
     """ Init Dataset """
     trainset = FaceByRandOccMask(
-        root_dir=cfg.rec,
+        root_dir=conf.rec,
         local_rank=0,
-        out_size=cfg.out_size,
-        use_norm=cfg.use_norm,
-        is_gray=cfg.is_gray,
+        out_size=conf.out_size,
+        use_norm=conf.use_norm,
+        is_gray=conf.is_gray,
         is_train=True,
         )
     # trainset = MXFaceDataset(
-    #     root_dir=cfg.rec,
+    #     root_dir=conf.rec,
     #     local_rank=local_rank)
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         trainset, shuffle=True)
-    nw = cfg.nw
+    nw = conf.nw
     train_loader = DataLoaderX(
-        local_rank=local_rank, dataset=trainset, batch_size=cfg.batch_size,
+        local_rank=local_rank, dataset=trainset, batch_size=conf.batch_size,
         sampler=train_sampler, num_workers=nw, pin_memory=True, drop_last=True)
 
     # from tricks.automatic_weighted_loss import AutomaticWeightedLoss
     # awl = AutomaticWeightedLoss(2).cuda()
 
     """ Init Model """
-    dropout = 0.4 if cfg.dataset is 'webface' else 0
+    dropout = 0.4 if conf.dataset is 'webface' else 0
     backbone = backbones.MSML(
-        frb_type=cfg.frb_type,
-        osb_type=cfg.osb_type,
-        fm_layers=cfg.fm_layers,
-        header_type=cfg.header_type,
-        header_params=cfg.header_params,
-        num_classes=cfg.num_classes,
-        fp16=cfg.fp16,
+        frb_type=conf.frb_type,
+        osb_type=conf.osb_type,
+        fm_layers=conf.fm_layers,
+        header_type=conf.header_type,
+        header_params=conf.header_params,
+        num_classes=conf.num_classes,
+        fp16=conf.fp16,
         dropout=dropout,
-        use_osb=cfg.use_osb,
-        fm_params=cfg.fm_params,
+        use_osb=conf.use_osb,
+        fm_params=conf.fm_params,
     ).to(local_rank)
 
     """ Load Pretrained Weights """
     if args.resume:
         try:
-            backbone_pth = os.path.join(cfg.output, "backbone.pth")
+            backbone_pth = os.path.join(conf.output, "backbone.pth")
             backbone.load_state_dict(torch.load(backbone_pth, map_location=torch.device(local_rank)))
             if rank is 0:
                 logging.info("backbone resume successfully!")
         except (FileNotFoundError, KeyError, IndexError, RuntimeError):
             logging.info("resume fail, backbone init successfully!")
-        # awl_pth = os.path.join(cfg.output, "awloss.pth")
+        # awl_pth = os.path.join(conf.output, "awloss.pth")
         # if os.path.exists(awl_pth):
         #     awl.load_state_dict(torch.load(awl_pth, map_location=torch.device(local_rank)))
 
@@ -125,8 +125,8 @@ def main(args):
     # margin_softmax = eval("losses.{}".format(args.loss))()
     # module_partial_fc = PartialFC(
     #     rank=rank, local_rank=local_rank, world_size=world_size, resume=args.resume,
-    #     batch_size=cfg.batch_size, margin_softmax=margin_softmax, num_classes=cfg.num_classes,
-    #     sample_rate=cfg.sample_rate, embedding_size=cfg.embedding_size, prefix=cfg.output)
+    #     batch_size=conf.batch_size, margin_softmax=margin_softmax, num_classes=conf.num_classes,
+    #     sample_rate=conf.sample_rate, embedding_size=conf.embedding_size, prefix=conf.output)
     module_partial_fc = torch.nn.Conv2d(1, 1, 3)
 
     # for ps in awl.parameters():
@@ -139,31 +139,31 @@ def main(args):
         # 1. occlusion segmentation branch
         if 'osb' in name:
             # osb uses a fixed learning rate: 0.01 for batch size 512
-            params += [{'params': value, 'lr': 0.01 / 512 * cfg.batch_size * world_size}]
+            params += [{'params': value, 'lr': 0.01 / 512 * conf.batch_size * world_size}]
 
         # 2. face recognition branch
         else:
             # from scratch (lr = 0.1)
-            if not cfg.pretrained:
+            if not conf.pretrained:
                 params += [{'params': value}]
                 continue
 
             # pretrained (lr = 0.001)
             if 'classification' in name:  # fc layers need higher learning rate
-                params += [{'params': value, 'lr': 10 * cfg.lr / 512 * cfg.batch_size * world_size}]
+                params += [{'params': value, 'lr': 10 * conf.lr / 512 * conf.batch_size * world_size}]
             elif 'fm_ops' in name:  # fm operators are always trained from scratch
-                params += [{'params': value, 'lr': 0.1 / 512 * cfg.batch_size * world_size}]
+                params += [{'params': value, 'lr': 0.1 / 512 * conf.batch_size * world_size}]
             else:
                 params += [{'params': value}]
 
     opt_backbone = torch.optim.SGD(
         params=params,
-        lr=cfg.lr / 512 * cfg.batch_size * world_size,
-        momentum=cfg.momentum, weight_decay=cfg.weight_decay)
+        lr=conf.lr / 512 * conf.batch_size * world_size,
+        momentum=conf.momentum, weight_decay=conf.weight_decay)
     # opt_backbone = torch.optim.AdamW(
     #     params=[{'params': backbone.parameters()},
     #             {'params': awl.parameters(), 'weight_decay': 0}],
-    #     lr=cfg.lr / 512 * cfg.batch_size * world_size,
+    #     lr=conf.lr / 512 * conf.batch_size * world_size,
     #     betas=(0.9, 0.999),
     #     eps=1e-08,
     #     weight_decay=0.04,
@@ -171,40 +171,50 @@ def main(args):
     # )
     opt_pfc = torch.optim.SGD(
         params=[{'params': module_partial_fc.parameters()}],
-        lr=cfg.lr / 512 * cfg.batch_size * world_size,
-        momentum=cfg.momentum, weight_decay=cfg.weight_decay)
+        lr=conf.lr / 512 * conf.batch_size * world_size,
+        momentum=conf.momentum, weight_decay=conf.weight_decay)
 
     scheduler_backbone = torch.optim.lr_scheduler.LambdaLR(
-        optimizer=opt_backbone, lr_lambda=cfg.lr_func)
+        optimizer=opt_backbone, lr_lambda=conf.lr_func)
     scheduler_pfc = torch.optim.lr_scheduler.LambdaLR(
-        optimizer=opt_pfc, lr_lambda=cfg.lr_func)
+        optimizer=opt_pfc, lr_lambda=conf.lr_func)
+
+    # for p in opt_backbone.param_groups:
+    #     outputs = ''
+    #     for k, v in p.items():
+    #         if k is 'params':
+    #             outputs += (k + ': ' + str(v[0].shape).ljust(30) + ' ')
+    #         else:
+    #             outputs += (k + ': ' + str(v).ljust(10) + ' ')
+    #     print(outputs)
+    # raise ValueError
 
     """ Calculate Total Training Steps """
     start_epoch = 0
-    total_step = int(len(trainset) / cfg.batch_size / world_size *
-                     (cfg.num_epoch - args.resume))
+    total_step = int(len(trainset) / conf.batch_size / world_size *
+                     (conf.num_epoch - args.resume))
     if rank is 0: logging.info("Total Step is: %d" % total_step)
 
     """ Callback Functions """
-    callback_verification = CallBackVerification(8000, rank, cfg.val_targets, cfg.rec,
-                                                 image_size=cfg.out_size, is_gray=cfg.is_gray)
-    callback_logging = CallBackLogging(50, rank, total_step, cfg.batch_size, world_size, None)
-    callback_checkpoint = CallBackModelCheckpoint(rank, cfg.output)
+    callback_verification = CallBackVerification(8000, rank, conf.val_targets, conf.rec,
+                                                 image_size=conf.out_size, is_gray=conf.is_gray)
+    callback_logging = CallBackLogging(50, rank, total_step, conf.batch_size, world_size, None)
+    callback_checkpoint = CallBackModelCheckpoint(rank, conf.output)
 
     """ Loss & Grad """
     loss = AverageMeter()
     loss_1 = AverageMeter()
     global_step = 0
-    grad_scaler = MaxClipGradScaler(init_scale=cfg.batch_size,  # cfg.batch_size
-                                    max_scale=128 * cfg.batch_size,
-                                    growth_interval=100) if cfg.fp16 else None
+    grad_scaler = MaxClipGradScaler(init_scale=conf.batch_size,  # conf.batch_size
+                                    max_scale=128 * conf.batch_size,
+                                    growth_interval=100) #if conf.fp16 else None
 
     from tricks.consensus_loss import StructureConsensuLossFunction
     seg_criterion = StructureConsensuLossFunction(10.0, 5.0, 'idx', 'idx')
     cls_criterion = torch.nn.CrossEntropyLoss()
 
     """ Training """
-    for epoch in range(start_epoch, cfg.num_epoch):
+    for epoch in range(start_epoch, conf.num_epoch):
         train_sampler.set_epoch(epoch)
         if epoch < args.resume:
             if rank == 0:
@@ -215,10 +225,10 @@ def main(args):
             global_step += 1
 
             """ op1: full classes """
-            with amp.autocast(cfg.fp16):
+            with amp.autocast(conf.fp16):
                 final_cls, final_seg = backbone(img, label)
 
-                if cfg.use_osb:
+                if conf.use_osb:
                     with torch.no_grad():
                         msk_cc_var = Variable(msk.clone().cuda(non_blocking=True))
                     seg_loss = seg_criterion(final_seg, msk_cc_var, msk)
@@ -227,10 +237,10 @@ def main(args):
 
                 cls_loss = cls_criterion(final_cls, label)
 
-                total_loss = cls_loss + cfg.lambda1 * seg_loss
+                total_loss = cls_loss + conf.lambda1 * seg_loss
                 # total_loss = awl(cls_loss, seg_loss, rank=rank)  # Adaptive Weighted Loss
 
-            if cfg.fp16:
+            if conf.fp16:
                 grad_scaler.scale(total_loss).backward()
                 grad_scaler.unscale_(opt_backbone)
                 clip_grad_norm_(backbone.parameters(), max_norm=5, norm_type=2)
@@ -251,7 +261,7 @@ def main(args):
             # # from torchinfo import summary
             # # summary(backbone, input_size=(1, 3, 112, 112))
             # x_grad, loss_v = module_partial_fc.forward_backward(label, features, opt_pfc)
-            # if cfg.fp16:
+            # if conf.fp16:
             #     features.backward(grad_scaler.scale(x_grad))
             #     grad_scaler.unscale_(opt_backbone)
             #     clip_grad_norm_(backbone.parameters(), max_norm=5, norm_type=2)
@@ -287,16 +297,46 @@ def main(args):
             if global_step % 100 == 0 and rank == 0:
                 logging.info('[exp_%d], seg_loss=%.4f, cls_loss=%.4f, scale=%.4f, lr=%.4f, l1=%.4f, '
                       'num_workers=%d'
-                      % (cfg.exp_id, seg_loss, loss_1.avg, grad_scaler.get_scale(), cfg.lr, cfg.lambda1, nw))
+                      % (conf.exp_id, seg_loss, loss_1.avg, grad_scaler.get_scale(), conf.lr, conf.lambda1, nw))
 
             loss.update(loss_v, 1)
-            callback_logging(global_step, loss, epoch, cfg.fp16, grad_scaler)
+            callback_logging(global_step, loss, epoch, conf.fp16, grad_scaler)
             callback_verification(global_step, backbone)
 
             if global_step % 1000 == 0:
                 for param_group in opt_backbone.param_groups:
                     lr = param_group['lr']
                 print(lr)
+
+            if global_step % 50 == 0 and False:
+                snapshot_folder = os.path.join(conf.output, 'snapshot')
+                if not os.path.exists(snapshot_folder):
+                    os.mkdir(snapshot_folder)
+
+                import numpy as np
+                import PIL.Image as Image
+                i = global_step
+                # save snapshot for mask learning
+                if conf.is_gray:
+                    snapshot = np.zeros((128, 128), dtype=np.uint8)
+                    snapshot = (img[0][0].cpu().data.numpy()) * 255
+                    snapshot = Image.fromarray(snapshot.astype(np.uint8), mode='L')
+                else:
+                    snapshot = np.zeros((112, 112, 3), dtype=np.uint8)
+                    snapshot[:, :, 0] = (img[0][0].cpu().data.numpy() + 1.0) * 127.5
+                    snapshot[:, :, 1] = (img[0][1].cpu().data.numpy() + 1.0) * 127.5
+                    snapshot[:, :, 2] = (img[0][2].cpu().data.numpy() + 1.0) * 127.5
+                    snapshot = Image.fromarray(snapshot.astype(np.uint8), mode='RGB')
+
+                snapshot.save(os.path.join(conf.output, 'snapshot/' + str(i) + '_face.jpg'))
+
+                mask = (final_seg[0].float().cpu().max(0)[1].data.numpy()) * 255
+                mask = Image.fromarray(mask.astype(np.uint8))
+                mask.save(os.path.join(conf.output, 'snapshot/' + str(i) + '_seg.jpg'))
+
+                gt_msk = (msk[0].cpu().data.numpy()) * 255
+                gt_msk = Image.fromarray(gt_msk.astype(np.uint8))
+                gt_msk.save(os.path.join(conf.output, 'snapshot/' + str(i) + '_gt_occ.jpg'))
 
         callback_checkpoint(global_step, backbone, None, awloss=None)
         scheduler_backbone.step()
