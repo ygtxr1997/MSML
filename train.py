@@ -347,8 +347,8 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='PyTorch MSML Training')
     parser.add_argument('--local_rank', type=int, default=0, help='local_rank')
-    parser.add_argument('--network', type=str, default='None', help='backbone network')
-    parser.add_argument('--loss', type=str, default='ArcFace', help='loss function')
+    parser.add_argument('--network', type=str, default='None', help='backbone network (not used)')
+    parser.add_argument('--loss', type=str, default='ArcFace', help='loss function (not used)')
     parser.add_argument('--resume', type=int, default=0, help='model resuming')
     args_ = parser.parse_args()
     main(args_)
