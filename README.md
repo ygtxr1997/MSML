@@ -4,6 +4,7 @@
 
 This is an official implementation of AAAI 2022 paper 
 "MSML: Enhancing Occlusion-Robustness by Multi-Scale Segmentation-Based Mask Learning for Face Recognition".
+[https://www.aaai.org/AAAI22Papers/AAAI-50.YuanG.pdf](https://www.aaai.org/AAAI22Papers/AAAI-50.YuanG.pdf)
 
 For occluded face recognition, 
 the MSML network can effectively identify and remove the occlusions from 
