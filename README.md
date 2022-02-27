@@ -23,14 +23,14 @@ The datasets include training datasets and testing datasets.
 We also use a 3D mask augmentation scheme to improve the robustness to masked faces. 
 Please refer to [MSML/datasets](https://github.com/ygtxr1997/MSML/tree/main/datasets) for more details.
 
-## Start Train
+## Training
 
-Before starting train, you should edit the config file ([MSML/config.yaml]()) as you need.
+Before training, you should edit the config file ([MSML/config.yaml]()) as you need.
 The config file ([MSML/config.yaml]()) will be first loaded.
 Then some fixed settings in [MSML/config.py]() will be loaded according to the config file ([MSML/config.yaml]()).
 You may need to change dataset folders (`cfg.dataset`) in [MSML/config.py]().
 
-* Easily start train on 4 GPUs:
+* Easily start training on 4 GPUs:
 
 ```shell script
 CUDA_VISIBLE_DEVICES=0,1,2,3 python -m torch.distributed.launch --nproc_per_node=4 --nnodes=1 --node_rank=0 
@@ -48,7 +48,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python -m torch.distributed.launch --nproc_per_node
 --master_addr="127.0.0.1" --master_port=1234 train.py --resume 13
 ```
 
-## Start Test
+## Testing
 
 * Easily test your saved model by indicating the folder:
 
