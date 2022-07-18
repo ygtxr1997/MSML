@@ -136,7 +136,7 @@ class MSML(nn.Module):
         else:
             raise ValueError('Header type error!')
 
-    def forward(self, x, label=None, ):
+    def forward(self, x, label=None, ori=None):
         """ Part 1. OSB
         The output order of OSB should be carefully processed.
         """
@@ -153,12 +153,12 @@ class MSML(nn.Module):
         Note that FRB only returns latent feature rather than classification prediction.
         """
         with torch.cuda.amp.autocast(self.fp16):
-            feature = self.frb(x, segs)
+            feature, kd = self.frb(x, segs, ori)
 
         feature = feature.float() if self.fp16 else feature
         if self.training:
-            final_cls = self.classification(feature, label)
-            return final_cls, final_seg
+            final_cls = self.classification(feature, label) + kd
+            return final_cls, final_seg, kd
         else:
             return feature, final_seg
 

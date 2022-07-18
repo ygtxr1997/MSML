@@ -239,12 +239,17 @@ def main(args):
         for step, batch in enumerate(train_loader):  # Read original and masked face mxnet dataset
             global_step += 1
 
+            """ (img, label)
+                (img, msk, label)
+                (img, msk, ori, label) 
+            """
             img, label = batch[0], batch[-1]
             msk = batch[1] if len(batch) == 3 else None
+            ori = batch[2] if len(batch) == 4 else None
 
             """ op1: full classes """
             with amp.autocast(conf.fp16):
-                final_cls, final_seg = backbone(img, label)
+                final_cls, final_seg, kd = backbone(img, label, ori)
 
                 if conf.use_osb:
                     with torch.no_grad():
@@ -313,9 +318,9 @@ def main(args):
 
             loss_1.update(cls_loss, 1)
             if global_step % 100 == 0 and rank == 0:
-                logging.info('[exp_%d], seg_loss=%.4f, cls_loss=%.4f, scale=%.4f, lr=%.4f, l1=%.4f, '
+                logging.info('[exp_%d], seg_loss=%.4f, cls_loss=%.4f, kd_loss=%.4f, scale=%.4f, lr=%.4f, l1=%.4f, '
                       'num_workers=%d'
-                      % (conf.exp_id, seg_loss, loss_1.avg, grad_scaler.get_scale(), conf.lr, conf.lambda1, nw))
+                      % (conf.exp_id, seg_loss, loss_1.avg, kd, grad_scaler.get_scale(), conf.lr, conf.lambda1, nw))
 
             loss.update(loss_v, 1)
             callback_logging(global_step, loss, epoch, conf.fp16, grad_scaler)

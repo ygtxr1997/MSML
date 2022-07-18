@@ -105,27 +105,32 @@ class FaceByRandOccMask(data.Dataset):
 
         """ 2. Add mask or other 6 types of occlusion """
         mask_flag = True if np.random.randint(1, 11) >= 9 else False  # P{mask} = 2/10
+        ori, _ = self._get_occluded_face_and_mask(img, idx, False)
         img, msk = self._get_occluded_face_and_mask(img, idx, mask_flag)
 
         """ 3. Resize to out_size """
         img = self.resize(img)
         msk = self.resize(msk)
+        ori = self.resize(ori)
 
         """ 4. Random Horizontal Flip """
         if np.random.randint(1, 11) >= 5:  # P{flip}=0.5
             img = img.transpose(Image.FLIP_LEFT_RIGHT)
             msk = msk.transpose(Image.FLIP_LEFT_RIGHT)
+            ori = ori.transpose(Image.FLIP_LEFT_RIGHT)
 
         """ 5. For img, we convert it to tensor (in [0, 1]) and add Gaussian light to it. """
         img_tensor = self._add_gauss_to_face(img)
+        ori_tensor = self.face_to_tensor(ori)  # [0, 1]
 
         """ 6. For mask, we convert it to tensor (in [0, 1]) and use multiple augmentation methods. """
         img_tensor, msk_tensor = self._add_gauss_to_mask(img_tensor, msk, mask_flag)
 
         """ 7. Normalize """
         img_tensor = self.norm(img_tensor)
+        ori_tensor = self.norm(ori_tensor)
 
-        return img_tensor, msk_tensor, label
+        return img_tensor, msk_tensor, ori_tensor, label
 
     def __len__(self):
         return len(self.img_idx)

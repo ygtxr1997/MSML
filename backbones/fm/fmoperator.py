@@ -125,6 +125,32 @@ class FMCnn(nn.Module):
         self.arith_strategy = arith_strategy
         self.arith = arithmetic[arith_strategy]
 
+        """ Part5. Peer Distillation """
+        self.en_conv = True
+        if self.en_conv:
+            self.conv1 = nn.Sequential(
+                nn.Conv2d(channel_f, channel_f, 3, 1, 1),
+                nn.BatchNorm2d(channel_f, eps=1e-05,),
+                nn.PReLU(channel_f),
+                nn.Conv2d(channel_f, channel_f, 3, 1, 1),
+                nn.BatchNorm2d(channel_f, eps=1e-05, ),
+                nn.PReLU(channel_f),
+            )
+            self.conv2 = nn.Sequential(
+                nn.Conv2d(channel_f, channel_f, 3, 1, 1),
+                nn.BatchNorm2d(channel_f, eps=1e-05, ),
+                nn.PReLU(channel_f),
+                nn.Conv2d(channel_f, channel_f, 3, 1, 1),
+                nn.BatchNorm2d(channel_f, eps=1e-05, ),
+                nn.PReLU(channel_f),
+            )
+            self.conv_m = nn.Sequential(
+                nn.Conv2d(channel_f, channel_f, 3, 1, 1),
+                nn.BatchNorm2d(channel_f, eps=1e-05, ),
+                # nn.ReLU(inplace=True),
+                # nn.Sigmoid(),
+            )
+
         """ If true, some tensors will be deep copied. """
         self.en_save = False
 
@@ -234,10 +260,11 @@ class FMCnn(nn.Module):
         plt.savefig(os.path.join(save_folder, img_name))
         plt.clf()
 
-    def forward(self, yf, yo):
+    def forward(self, yf, yo, yt=None):
         """
         :param yf: facial features
         :param yo: occlusion segmentation representations
+        :param yt: peer knowledge
         :return: Z_f, purified facial features have the same shape with yf
         """
         identity = yf
@@ -247,10 +274,25 @@ class FMCnn(nn.Module):
         x = self.mask_norm(x)
         self._save_intermediate_features('contaminated', identity)
         self._save_intermediate_features('mask', x)
+
+        # m_bar = 1 - x
+        m_bar = self.conv_m(x)
+        f_out = m_bar * identity
+        f_out = self.conv1(f_out) if self.en_conv else f_out
+        if yt is not None:
+            f_occ = m_bar * yt
+            f_occ = self.conv2(f_occ) if self.en_conv else f_occ
+
         x = self.arith(identity, x)
         self._save_intermediate_features('purified', x)
+
+        x += f_out  # close or open ?
+        l2 = None
+        if yt is not None:
+            l2 = torch.nn.MSELoss()(f_occ, f_out)
+
         x += identity  # Using skip connection is better
-        return x
+        return x, l2
 
 
 class FMNone(nn.Module):

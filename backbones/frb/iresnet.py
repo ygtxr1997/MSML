@@ -112,6 +112,14 @@ class IResNet(nn.Module):
         assert len(fm_ops) == 4
         self.fm_ops = nn.ModuleList(fm_ops)
 
+        """ Peer """
+        from backbones.peer import arcface18
+        self.peer = arcface18().requires_grad_(False)
+
+        """ Recover """
+        from backbones.decoder import dm_decoder
+        self.decoder = dm_decoder(n_init=dim_feature)
+
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.normal_(m.weight, 0, 0.1)
@@ -150,7 +158,7 @@ class IResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x, segs):
+    def forward(self, x, segs, ori):
         """ IResNet in FRB
         input:
             img     - (B, 3, 112, 112)
@@ -161,29 +169,42 @@ class IResNet(nn.Module):
         output:
             feature - (B, dim_feature)
         """
+
+        # Peer knowledge
+        ft0, ft1, ft2, ft3 = None, None, None, None
+        if ori is not None:
+            _, inter = self.peer(ori)
+            ft0, ft1, ft2, ft3 = inter[0], inter[1], inter[2], inter[3]
+
         with torch.cuda.amp.autocast(self.fp16):
             x = self.conv1(x)
             x = self.bn1(x)
             x = self.prelu(x)  # stem stage
 
             x = self.layer1(x)  # (64, 56, 56)
-            x = self.fm_ops[0](x, segs[0])
+            x, l = self.fm_ops[0](x, segs[0], ft0)
 
             x = self.layer2(x)  # (128, 28, 28)
-            x = self.fm_ops[1](x, segs[1])
+            x, l1 = self.fm_ops[1](x, segs[1], ft1)
 
             x = self.layer3(x)  # (256, 14, 14)
-            x = self.fm_ops[2](x, segs[2])
+            x, l2 = self.fm_ops[2](x, segs[2], ft2)
 
             x = self.layer4(x)  # (512, 7, 7)
-            x = self.fm_ops[3](x, segs[3])
+            x, l3 = self.fm_ops[3](x, segs[3], ft3)
 
             x = self.bn2(x)
+
+            # recover
+            rec, l4 = self.decoder(x, ori) if ori is not None else None, 0.
+
             x = torch.flatten(x, 1)
             x = self.dropout(x)
         x = self.fc(x.float() if self.fp16 else x)
         x = self.features(x)
-        return x
+        l = l + l1 + l2 + l3 if ori is not None else 0.  # KD
+        l = l + l4 if ori is not None else 0.  # Recover
+        return x, l * 1.0
 
 
 """ Vanilla IResNet
@@ -191,10 +212,15 @@ class IResNet(nn.Module):
 class IResNetVanilla(nn.Module):
     fc_scale = 7 * 7
     def __init__(self,
-                 block, layers, dropout=0, num_features=512, zero_init_residual=False,
-                 groups=1, width_per_group=64, replace_stride_with_dilation=None, fp16=False):
+                 block,
+                 layers,
+                 dim_feature=512,
+                 dropout=0,
+                 zero_init_residual=False,
+                 groups=1, width_per_group=64,
+                 replace_stride_with_dilation=None,
+                 fp16=False):
         super(IResNetVanilla, self).__init__()
-        self.extra_gflops = 0.0
         self.fp16 = fp16
         self.inplanes = 64
         self.dilation = 1
@@ -224,10 +250,11 @@ class IResNetVanilla(nn.Module):
                                        layers[3],
                                        stride=2,
                                        dilate=replace_stride_with_dilation[2])
+
         self.bn2 = nn.BatchNorm2d(512 * block.expansion, eps=1e-05,)
         self.dropout = nn.Dropout(p=dropout, inplace=True)
-        self.fc = nn.Linear(512 * block.expansion * self.fc_scale, num_features)
-        self.features = nn.BatchNorm1d(num_features, eps=1e-05)
+        self.fc = nn.Linear(512 * block.expansion * self.fc_scale, dim_feature)
+        self.features = nn.BatchNorm1d(dim_feature, eps=1e-05)
         nn.init.constant_(self.features.weight, 1.0)
         self.features.weight.requires_grad = False
 
@@ -270,14 +297,35 @@ class IResNetVanilla(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        """ IResNet for peer (or teacher)
+        input:
+            img     - (B, 3, 112, 112)
+
+        output:
+            feature - (B, dim_feature)
+            inter   - [(B, 64, 56, 56),    # ft0
+                       (B, 128, 28, 28),   # ft1
+                       (B, 256, 14, 14),   # ft2
+                       (B, 512, 7, 7),]    # ft3
+        """
+        inter = []
         with torch.cuda.amp.autocast(self.fp16):
             x = self.conv1(x)
             x = self.bn1(x)
-            x = self.prelu(x)
-            x = self.layer1(x)
-            x = self.layer2(x)
-            x = self.layer3(x)
-            x = self.layer4(x)
+            x = self.prelu(x)  # stem stage
+
+            x = self.layer1(x)  # (64, 56, 56)
+            inter.append(x.detach())
+
+            x = self.layer2(x)  # (128, 28, 28)
+            inter.append(x.detach())
+
+            x = self.layer3(x)  # (256, 14, 14)
+            inter.append(x.detach())
+
+            x = self.layer4(x)  # (512, 7, 7)
+            inter.append(x.detach())
+
             x = self.bn2(x)
             x = torch.flatten(x, 1)
             x = self.dropout(x)
@@ -365,43 +413,71 @@ if __name__ == '__main__':
 
     batch_size = 1
 
-    """ Prepare for Feature Masking Operators """
-    from backbones.fm import FMCnn, FMNone
-    heights = [56, 28, 14, 7]
-    f_channels = [64, 128, 256, 512]
-    s_channels = [18, 18, 18, 18]
-    fm_layers = [1, 1, 1, 1]
+    # """ Prepare for Feature Masking Operators """
+    # from backbones.fm import FMCnn, FMNone
+    # heights = [56, 28, 14, 7]
+    # f_channels = [64, 128, 256, 512]
+    # s_channels = [18, 18, 18, 18]
+    # fm_layers = [1, 1, 1, 1]
+    #
+    # fm_ops = []
+    # for i in range(4):
+    #     fm_type = fm_layers[i]
+    #     print('fm_type', i, '=', fm_type)
+    #     if fm_type == 0:
+    #         fm_ops.append(FMNone())
+    #     elif fm_type == 1:
+    #         fm_ops.append(FMCnn(
+    #             height=heights[i],
+    #             width=heights[i],
+    #             channel_f=f_channels[i]
+    #         ))
+    #     else:
+    #         raise ValueError
+    #
+    # """ Prepare for Occlusion Segmentation Representations """
+    # segs = [torch.randn(batch_size, 18, 56, 56),  # seg3
+    #         torch.randn(batch_size, 18, 28, 28),  # seg2
+    #         torch.randn(batch_size, 18, 14, 14),  # seg1
+    #         torch.randn(batch_size, 18, 7, 7),]  # seg0
+    #
+    # """ Test for iresnet18 """
+    # ires = iresnet18(
+    #     fm_ops=fm_ops,
+    # )
+    # img = torch.randn((batch_size, 3, 112, 112))
+    # ires.eval()
+    # feature = ires(img, segs)
+    # print(feature.shape)
+    #
+    # import thop
+    # flops, params = thop.profile(ires, inputs=(img, segs))
+    # print('flops', flops / 1e9, 'params', params / 1e6)
 
-    fm_ops = []
-    for i in range(4):
-        fm_type = fm_layers[i]
-        print('fm_type', i, '=', fm_type)
-        if fm_type == 0:
-            fm_ops.append(FMNone())
-        elif fm_type == 1:
-            fm_ops.append(FMCnn(
-                height=heights[i],
-                width=heights[i],
-                channel_f=f_channels[i]
-            ))
-        else:
-            raise ValueError
+    """ IResNet vanilla """
+    model = iresnet18_v().cuda()
+    weight = torch.load('demo/backbone.pth')
+    model.load_state_dict(weight)
+    model.eval()
 
-    """ Prepare for Occlusion Segmentation Representations """
-    segs = [torch.randn(batch_size, 18, 56, 56),  # seg3
-            torch.randn(batch_size, 18, 28, 28),  # seg2
-            torch.randn(batch_size, 18, 14, 14),  # seg1
-            torch.randn(batch_size, 18, 7, 7),]  # seg0
+    from PIL import Image
+    img_1 = Image.open('demo/retina_1.png').convert('RGB')
+    img_2 = Image.open('demo/retina_2.png').convert('RGB')
 
-    """ Test for iresnet18 """
-    ires = iresnet18(
-        fm_ops=fm_ops,
-    )
-    img = torch.randn((batch_size, 3, 112, 112))
-    ires.eval()
-    feature = ires(img, segs)
-    print(feature.shape)
+    import torchvision.transforms as transforms
+    trans = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5],
+                             std=[0.5, 0.5, 0.5])
+    ])
+    x = trans(img_1).cuda()
+    y = trans(img_2).cuda()
+    x = x[None, :, :, :]
+    y = y[None, :, :, :]
 
-    import thop
-    flops, params = thop.profile(ires, inputs=(img, segs))
-    print('flops', flops / 1e9, 'params', params / 1e6)
+    x = model(x)
+    y = model(y)
+
+    res = torch.cosine_similarity(x, y, dim=-1).cpu()
+    print(res)
+    # print('cosine sim = %.4f' % res)
