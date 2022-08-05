@@ -1,9 +1,13 @@
+import os.path
+
 import yaml
 from easydict import EasyDict as edict
 
-with open('config.yaml') as f:
-    loaded = yaml.safe_load(f)
-conf = edict(loaded)
+""" Only used for training """
+if os.path.exists('config.yaml'):
+    with open('config.yaml') as f:
+        loaded = yaml.safe_load(f)
+    conf = edict(loaded)
 
 """ Main Function of Initializing Config """
 def config_init(cfg: edict):
@@ -21,7 +25,7 @@ def config_dataset(cfg: edict):
 
     if cfg.dataset == 'ms1m-retinaface-t2':
         cfg.rec = '/tmp/train_tmp/ms1m-retinaface'  # mount on RAM
-        cfg.nw = 4
+        cfg.nw = 32
         cfg.num_classes = 93431
         cfg.num_epoch = 25
         cfg.warmup_epoch = -1
@@ -52,7 +56,7 @@ def config_dataset(cfg: edict):
 
     elif cfg.dataset == 'webface':
         cfg.rec = '/tmp/train_tmp/casia'  # mount on RAM
-        cfg.nw = 4
+        cfg.nw = 32
         cfg.num_classes = 10572
         cfg.num_epoch = 34
         cfg.warmup_epoch = -1
@@ -101,7 +105,10 @@ def config_model(cfg: edict):
 """ 4. Experiment Record """
 def config_exp(cfg: edict):
     # cfg.exp_id = 1
-    cfg.output = cfg.output_prefix + '_' + str(cfg.exp_id)
+    out_folder = 'out'
+    if not os.path.exists(out_folder):
+        os.mkdir(out_folder)
+    cfg.output = os.path.join(out_folder, cfg.output_prefix + '_' + str(cfg.exp_id))
     print('output path: ', cfg.output)
 
 """ yaml to edict """

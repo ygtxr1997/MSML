@@ -14,7 +14,7 @@ import utils
 import backbones
 from config import conf, config_init
 from datasets.dataloaderx import DataLoaderX
-from datasets.load_dataset import FaceByRandOccMask
+from datasets.load_dataset import FaceByRandOccMask, MXFaceDataset
 from headers.partial_fc import PartialFC
 
 from utils.utils_callbacks import CallBackVerification, CallBackLogging, CallBackModelCheckpoint
@@ -42,10 +42,23 @@ def main(args):
     torch.backends.cudnn.deterministic = True
 
     """ DDP Training """
-    world_size = int(os.environ['WORLD_SIZE'])
-    rank = int(os.environ['RANK'])
-    dist_url = "tcp://{}:{}".format(os.environ["MASTER_ADDR"], os.environ["MASTER_PORT"])
-    dist.init_process_group(backend='nccl', init_method=dist_url, rank=rank, world_size=world_size)
+    try:
+        world_size = int(os.environ["WORLD_SIZE"])
+        rank = int(os.environ["RANK"])
+        dist.init_process_group("nccl")
+    except KeyError:
+        world_size = 1
+        rank = 0
+        dist.init_process_group(
+            backend="nccl",
+            init_method="tcp://127.0.0.1:12584",
+            rank=rank,
+            world_size=world_size,
+        )
+    # world_size = int(os.environ['WORLD_SIZE'])
+    # rank = int(os.environ['RANK'])
+    # dist_url = "tcp://{}:{}".format(os.environ["MASTER_ADDR"], os.environ["MASTER_PORT"])
+    # dist.init_process_group(backend='nccl', init_method=dist_url, rank=rank, world_size=world_size)
     local_rank = args.local_rank
     torch.cuda.set_device(local_rank)
 
@@ -65,17 +78,19 @@ def main(args):
     init_logging(log_root, rank, conf.output)
 
     """ Init Dataset """
-    trainset = FaceByRandOccMask(
-        root_dir=conf.rec,
-        local_rank=0,
-        out_size=conf.out_size,
-        use_norm=conf.use_norm,
-        is_gray=conf.is_gray,
-        is_train=True,
-        )
-    # trainset = MXFaceDataset(
-    #     root_dir=conf.rec,
-    #     local_rank=local_rank)
+    if args.occ:
+        trainset = FaceByRandOccMask(
+            root_dir=conf.rec,
+            local_rank=0,
+            out_size=conf.out_size,
+            use_norm=conf.use_norm,
+            is_gray=conf.is_gray,
+            is_train=True,
+            )
+    else:
+        trainset = MXFaceDataset(
+            root_dir=conf.rec,
+            local_rank=local_rank)
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         trainset, shuffle=True)
     nw = conf.nw
@@ -221,8 +236,11 @@ def main(args):
                 print('=====> skip epoch %d' % (epoch))
             scheduler_backbone.step()
             continue
-        for step, (img, msk, label) in enumerate(train_loader):  # Read original and masked face mxnet dataset
+        for step, batch in enumerate(train_loader):  # Read original and masked face mxnet dataset
             global_step += 1
+
+            img, label = batch[0], batch[-1]
+            msk = batch[1] if len(batch) == 3 else None
 
             """ op1: full classes """
             with amp.autocast(conf.fp16):
@@ -334,9 +352,10 @@ def main(args):
                 mask = Image.fromarray(mask.astype(np.uint8))
                 mask.save(os.path.join(conf.output, 'snapshot/' + str(i) + '_seg.jpg'))
 
-                gt_msk = (msk[0].cpu().data.numpy()) * 255
-                gt_msk = Image.fromarray(gt_msk.astype(np.uint8))
-                gt_msk.save(os.path.join(conf.output, 'snapshot/' + str(i) + '_gt_occ.jpg'))
+                if msk is not None:
+                    gt_msk = (msk[0].cpu().data.numpy()) * 255
+                    gt_msk = Image.fromarray(gt_msk.astype(np.uint8))
+                    gt_msk.save(os.path.join(conf.output, 'snapshot/' + str(i) + '_gt_occ.jpg'))
 
         callback_checkpoint(global_step, backbone, None, awloss=None)
         scheduler_backbone.step()
@@ -350,5 +369,6 @@ if __name__ == "__main__":
     parser.add_argument('--network', type=str, default='None', help='backbone network (not used)')
     parser.add_argument('--loss', type=str, default='ArcFace', help='loss function (not used)')
     parser.add_argument('--resume', type=int, default=0, help='model resuming')
+    parser.add_argument('--occ', type=bool, default=True, help='use occlusion augmentation or not')
     args_ = parser.parse_args()
     main(args_)
