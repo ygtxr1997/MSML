@@ -3,8 +3,14 @@
 import os
 import pickle
 
+import PIL.Image
 import matplotlib
 import pandas as pd
+
+# from backbones import get_model
+import backbones
+from backbones import iresnet18_v
+from config import config_init, load_yaml
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -15,7 +21,6 @@ import cv2
 import numpy as np
 import torch
 from skimage import transform as trans
-# from backbones import get_model
 from sklearn.metrics import roc_curve, auc
 
 from menpo.visualize.viewmatplotlib import sample_colours_from_colourmap
@@ -28,15 +33,21 @@ import warnings
 sys.path.insert(0, "../")
 warnings.filterwarnings("ignore")
 
+"""
+python3 qeval_ijbc.py --model-prefix /gavin/code/MSML/weights/ms1mv3_arcface_r18_fp16/backbone.pth --image-path /gavin/datasets/msml/ijb/IJBB --target IJBB
+python3 qeval_ijbc.py --model-prefix /gavin/code/MSML/ires18_msml_1/backbone.pth --image-path /gavin/datasets/msml/ijb/IJBB --target IJBB
+"""
 parser = argparse.ArgumentParser(description='do ijb test')
 # general
 parser.add_argument('--model-prefix', default='', help='path to load model.')
 parser.add_argument('--image-path', default='', type=str, help='')
 parser.add_argument('--result-dir', default='.', type=str, help='')
-parser.add_argument('--batch-size', default=128, type=int, help='')
+parser.add_argument('--batch-size', default=256, type=int, help='')
 parser.add_argument('--network', default='iresnet50', type=str, help='')
 parser.add_argument('--job', default='insightface', type=str, help='job name')
 parser.add_argument('--target', default='IJBC', type=str, help='target, set to IJBC or IJBB')
+parser.add_argument('--lo', default=0, type=int, help='low range of occlusion ratio')
+parser.add_argument('--hi', default=1, type=int, help='high range of occlusion ratio')
 args = parser.parse_args()
 
 target = args.target
@@ -52,15 +63,13 @@ batch_size = args.batch_size
 
 
 class Embedding(object):
-    def __init__(self, prefix, data_shape, batch_size=1):
+    def __init__(self, prefix, data_shape, batch_size=1,
+                 lo=0, hi=1,
+                 ):
         image_size = (112, 112)
         self.image_size = image_size
 
-        weight = torch.load(prefix)
-        resnet = get_model(args.network, dropout=0, fp16=False).cuda()
-        resnet.load_state_dict(weight)
-        model = torch.nn.DataParallel(resnet)
-        self.model = model
+        self.model = self._get_model(prefix)
         self.model.eval()
 
         src = np.array([
@@ -73,6 +82,40 @@ class Embedding(object):
         self.src = src
         self.batch_size = batch_size
         self.data_shape = data_shape
+
+        self.lo = lo
+        self.hi = hi
+
+    @staticmethod
+    def _get_model(prefix):
+        # resnet = get_model(args.network, dropout=0, fp16=False).cuda()
+
+        if 'msml' not in prefix:
+            print('loading vanilla iresnet...')
+            weight = torch.load(prefix)
+            resnet = iresnet18_v(dropout=0, fp16=False).cuda()
+            resnet.load_state_dict(weight)
+            model = torch.nn.DataParallel(resnet)
+        else:
+            print('loading msml model...')
+            weight = torch.load(prefix)
+            cfg = load_yaml(os.path.join(os.path.dirname(prefix), 'config.yaml'))
+            config_init(cfg)
+            msml = backbones.MSML(
+                frb_type=cfg.frb_type,
+                osb_type=cfg.osb_type,
+                fm_layers=cfg.fm_layers,
+                header_type=cfg.header_type,
+                header_params=cfg.header_params,
+                num_classes=cfg.num_classes,
+                fp16=False,
+                use_osb=cfg.use_osb,
+                fm_params=cfg.fm_params,
+            ).cuda()
+            msml.load_state_dict(weight)
+            model = torch.nn.DataParallel(msml)
+
+        return model
 
     def get(self, rimg, landmark):
 
@@ -94,6 +137,13 @@ class Embedding(object):
                              M, (self.image_size[1], self.image_size[0]),
                              borderValue=0.0)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        from datasets.augment.rand_occ import RandomBlock
+        occ_trans = RandomBlock(lo=self.lo, hi=self.hi)
+        img = PIL.Image.fromarray(img)
+        img = occ_trans(img)
+        img = np.array(img)
+
         img_flip = np.fliplr(img)
         img = np.transpose(img, (2, 0, 1))  # 3*112*112, RGB
         img_flip = np.transpose(img_flip, (2, 0, 1))
@@ -107,6 +157,8 @@ class Embedding(object):
         imgs = torch.Tensor(batch_data).cuda()
         imgs.div_(255).sub_(0.5).div_(0.5)
         feat = self.model(imgs)
+        if type(feat) is tuple:
+            feat = feat[0]
         feat = feat.reshape([self.batch_size, 2 * feat.shape[1]])
         return feat.cpu().numpy()
 
@@ -165,7 +217,8 @@ def get_image_feature(img_path, files_list, model_path, epoch, gpu_id):
     img_feats = np.empty((len(files), 1024), dtype=np.float32)
 
     batch_data = np.empty((2 * batch_size, 3, 112, 112))
-    embedding = Embedding(model_path, data_shape, batch_size)
+    embedding = Embedding(model_path, data_shape, batch_size,
+                          lo=args.lo, hi=args.hi)
     for img_index, each_line in enumerate(files[:len(files) - rare_size]):
         name_lmk_score = each_line.strip().split(' ')
         img_name = os.path.join(img_path, name_lmk_score[0])
