@@ -26,6 +26,7 @@ from sklearn.metrics import roc_curve, auc
 from menpo.visualize.viewmatplotlib import sample_colours_from_colourmap
 from prettytable import PrettyTable
 from pathlib import Path
+from tqdm import tqdm
 
 import sys
 import warnings
@@ -34,21 +35,35 @@ sys.path.insert(0, "../")
 warnings.filterwarnings("ignore")
 
 """
-python3 qeval_ijbc.py --model-prefix /gavin/code/MSML/weights/ms1mv3_arcface_r18_fp16/backbone.pth --image-path /gavin/datasets/msml/ijb/IJBB --target IJBB
-python3 qeval_ijbc.py --model-prefix /gavin/code/MSML/ires18_msml_1/backbone.pth --image-path /gavin/datasets/msml/ijb/IJBB --target IJBB
+python3 eval/qeval_ijbc.py --model-prefix /gavin/code/MSML/weights/ms1mv3_arcface_r18_fp16/backbone.pth --image-path /gavin/datasets/msml/ijb/IJBB --target IJBB
+python3 eval/qeval_ijbc.py --model-prefix /gavin/code/MSML/ires18_msml_1/backbone.pth --image-path /gavin/datasets/msml/ijb/IJBB --target IJBB
 """
 parser = argparse.ArgumentParser(description='do ijb test')
 # general
 parser.add_argument('--model-prefix', default='', help='path to load model.')
 parser.add_argument('--image-path', default='', type=str, help='')
 parser.add_argument('--result-dir', default='.', type=str, help='')
-parser.add_argument('--batch-size', default=256, type=int, help='')
+parser.add_argument('--batch-size', default=512, type=int, help='')
 parser.add_argument('--network', default='iresnet50', type=str, help='')
 parser.add_argument('--job', default='insightface', type=str, help='job name')
 parser.add_argument('--target', default='IJBC', type=str, help='target, set to IJBC or IJBB')
 parser.add_argument('--lo', default=0, type=int, help='low range of occlusion ratio')
 parser.add_argument('--hi', default=1, type=int, help='high range of occlusion ratio')
 args = parser.parse_args()
+
+import random
+import numpy as np
+
+random.seed(4)
+np.random.seed(1)
+torch.manual_seed(1)
+torch.cuda.manual_seed(1)
+torch.cuda.manual_seed_all(1)
+import mxnet as mx
+
+mx.random.seed(1)
+torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.deterministic = True
 
 target = args.target
 model_path = args.model_prefix
@@ -90,17 +105,12 @@ class Embedding(object):
     def _get_model(prefix):
         # resnet = get_model(args.network, dropout=0, fp16=False).cuda()
 
-        if 'msml' not in prefix:
-            print('loading vanilla iresnet...')
-            weight = torch.load(prefix)
-            resnet = iresnet18_v(dropout=0, fp16=False).cuda()
-            resnet.load_state_dict(weight)
-            model = torch.nn.DataParallel(resnet)
-        else:
+        if 'msml' in prefix or 'out' in prefix:
             print('loading msml model...')
             weight = torch.load(prefix)
             cfg = load_yaml(os.path.join(os.path.dirname(prefix), 'config.yaml'))
             config_init(cfg)
+            print(cfg)
             msml = backbones.MSML(
                 frb_type=cfg.frb_type,
                 osb_type=cfg.osb_type,
@@ -111,9 +121,16 @@ class Embedding(object):
                 fp16=False,
                 use_osb=cfg.use_osb,
                 fm_params=cfg.fm_params,
+                peer_params=cfg.peer_params,
             ).cuda()
             msml.load_state_dict(weight)
             model = torch.nn.DataParallel(msml)
+        else:
+            print('loading vanilla iresnet...')
+            weight = torch.load(prefix)
+            resnet = iresnet18_v(dropout=0, fp16=False).cuda()
+            resnet.load_state_dict(weight)
+            model = torch.nn.DataParallel(resnet)
 
         return model
 
@@ -219,7 +236,7 @@ def get_image_feature(img_path, files_list, model_path, epoch, gpu_id):
     batch_data = np.empty((2 * batch_size, 3, 112, 112))
     embedding = Embedding(model_path, data_shape, batch_size,
                           lo=args.lo, hi=args.hi)
-    for img_index, each_line in enumerate(files[:len(files) - rare_size]):
+    for img_index, each_line in tqdm(enumerate(files[:len(files) - rare_size])):
         name_lmk_score = each_line.strip().split(' ')
         img_name = os.path.join(img_path, name_lmk_score[0])
         img = cv2.imread(img_name)
@@ -231,7 +248,7 @@ def get_image_feature(img_path, files_list, model_path, epoch, gpu_id):
         batch_data[2 * (img_index - batch * batch_size)][:] = input_blob[0]
         batch_data[2 * (img_index - batch * batch_size) + 1][:] = input_blob[1]
         if (img_index + 1) % batch_size == 0:
-            print('batch', batch)
+            # print('batch', batch)
             img_feats[batch * batch_size:batch * batch_size +
                                          batch_size][:] = embedding.forward_db(batch_data)
             batch += 1
@@ -415,78 +432,98 @@ files = img_list.readlines()
 # files_list = divideIntoNstrand(files, rank_size)
 files_list = files
 
-# img_feats
-# for i in range(rank_size):
-img_feats, faceness_scores = get_image_feature(img_path, files_list,
-                                               model_path, 0, gpu_id)
-stop = timeit.default_timer()
-print('Time: %.2f s. ' % (stop - start))
-print('Feature Shape: ({} , {}) .'.format(img_feats.shape[0],
-                                          img_feats.shape[1]))
 
-# # Step3: Get Template Features
+def get_template_features(img_path, files_list, model_path,
+                          gpu_id):
+    # img_feats
+    # for i in range(rank_size):
+    img_feats, faceness_scores = get_image_feature(img_path, files_list,
+                                                   model_path, 0, gpu_id)
+    stop = timeit.default_timer()
+    print('Feature Shape: ({} , {}) .'.format(img_feats.shape[0],
+                                              img_feats.shape[1]))
 
-# In[ ]:
 
-# =============================================================
-# compute template features from image features.
-# =============================================================
-start = timeit.default_timer()
-# ==========================================================
-# Norm feature before aggregation into template feature?
-# Feature norm from embedding network and faceness score are able to decrease weights for noise samples (not face).
-# ==========================================================
-# 1. FaceScore （Feature Norm）
-# 2. FaceScore （Detector）
+    # # Step3: Get Template Features
 
-if use_flip_test:
-    # concat --- F1
-    # img_input_feats = img_feats
-    # add --- F2
-    img_input_feats = img_feats[:, 0:img_feats.shape[1] //
-                                     2] + img_feats[:, img_feats.shape[1] // 2:]
-else:
-    img_input_feats = img_feats[:, 0:img_feats.shape[1] // 2]
+    # In[ ]:
 
-if use_norm_score:
-    img_input_feats = img_input_feats
-else:
-    # normalise features to remove norm information
-    img_input_feats = img_input_feats / np.sqrt(
-        np.sum(img_input_feats ** 2, -1, keepdims=True))
+    # =============================================================
+    # compute template features from image features.
+    # =============================================================
+    start = timeit.default_timer()
+    # ==========================================================
+    # Norm feature before aggregation into template feature?
+    # Feature norm from embedding network and faceness score are able to decrease weights for noise samples (not face).
+    # ==========================================================
+    # 1. FaceScore （Feature Norm）
+    # 2. FaceScore （Detector）
 
-if use_detector_score:
-    print(img_input_feats.shape, faceness_scores.shape)
-    img_input_feats = img_input_feats * faceness_scores[:, np.newaxis]
-else:
-    img_input_feats = img_input_feats
+    if use_flip_test:
+        # concat --- F1
+        # img_input_feats = img_feats
+        # add --- F2
+        img_input_feats = img_feats[:, 0:img_feats.shape[1] //
+                                         2] + img_feats[:, img_feats.shape[1] // 2:]
+    else:
+        img_input_feats = img_feats[:, 0:img_feats.shape[1] // 2]
 
-template_norm_feats, unique_templates = image2template_feature(
-    img_input_feats, templates, medias)
-stop = timeit.default_timer()
-print('Time: %.2f s. ' % (stop - start))
+    if use_norm_score:
+        img_input_feats = img_input_feats
+    else:
+        # normalise features to remove norm information
+        img_input_feats = img_input_feats / np.sqrt(
+            np.sum(img_input_feats ** 2, -1, keepdims=True))
 
-# # Step 4: Get Template Similarity Scores
+    if use_detector_score:
+        print(img_input_feats.shape, faceness_scores.shape)
+        img_input_feats = img_input_feats * faceness_scores[:, np.newaxis]
+    else:
+        img_input_feats = img_input_feats
 
-# In[ ]:
+    template_norm_feats, unique_templates = image2template_feature(
+        img_input_feats, templates, medias)
+    stop = timeit.default_timer()
+    print('Time: %.2f s. ' % (stop - start))
 
-# =============================================================
-# compute verification scores between template pairs.
-# =============================================================
-start = timeit.default_timer()
-score = verification(template_norm_feats, unique_templates, p1, p2)
-stop = timeit.default_timer()
-print('Time: %.2f s. ' % (stop - start))
+    # # Step 4: Get Template Similarity Scores
 
-# In[ ]:
-save_path = os.path.join(result_dir, args.job)
-# save_path = result_dir + '/%s_result' % target
+    # In[ ]:
 
-if not os.path.exists(save_path):
-    os.makedirs(save_path)
+    # =============================================================
+    # compute verification scores between template pairs.
+    # =============================================================
+    start = timeit.default_timer()
+    score = verification(template_norm_feats, unique_templates, p1, p2)
+    stop = timeit.default_timer()
+    print('Time: %.2f s. ' % (stop - start))
 
-score_save_file = os.path.join(save_path, "%s.npy" % target.lower())
-np.save(score_save_file, score)
+    # In[ ]:
+    save_path = os.path.join(result_dir, args.job)
+    # save_path = result_dir + '/%s_result' % target
+
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+
+    score_save_file = os.path.join(save_path, "%s.npy" % target.lower())
+    np.save(score_save_file, score)
+
+    return save_path, score_save_file, score
+
+
+repeat_times = 10 if args.lo > 0 and args.hi > 1 else 1
+save_path = None
+score_save_file = None
+score = None
+for _ in tqdm(range(repeat_times)):
+    save_path, score_save_file, one_score = get_template_features(
+        img_path, files_list, model_path, gpu_id
+    )
+    if score is None:
+        score = one_score
+    else:
+        score += one_score
+score /= repeat_times
 
 # # Step 5: Get ROC Curves and TPR@FPR Table
 
