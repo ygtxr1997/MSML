@@ -114,6 +114,7 @@ def _deepmind_decoder(arch, block, layers, pretrained, **kwargs):
     # model = model.cuda()
     return model
 
+
 def dm_decoder(pretrained=False, **kwargs):
     return _deepmind_decoder('arcface18', ResBlock, None, pretrained, **kwargs)
 

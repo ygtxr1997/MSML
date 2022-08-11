@@ -28,12 +28,13 @@ class MSML(nn.Module):
                  header_params: tuple = (64.0, 0.5, 0.0, 0.0),  # (s, m, a, k)
                  dropout: float = 0.,
                  use_osb: bool = True,
+                 peer_params: dict = None,
                  ):
         super(MSML, self).__init__()
         assert len(fm_layers) == 4
         self._prepare_shapes(frb_type, osb_type)
-        self._prepare_fm(fm_layers, fm_params)
-        self._prepare_frb(frb_type, dropout)
+        self._prepare_fm(fm_layers, fm_params, peer_params)
+        self._prepare_frb(frb_type, dropout, peer_params)
         self._prepare_osb(osb_type)
 
         self.num_classes = num_classes
@@ -64,7 +65,7 @@ class MSML(nn.Module):
         else:
             raise ValueError('OSB type error')
 
-    def _prepare_fm(self, fm_layers, fm_params):
+    def _prepare_fm(self, fm_layers, fm_params, peer_params):
         fm_ops = []
         for i in range(4):
             fm_type = fm_layers[i]
@@ -80,12 +81,13 @@ class MSML(nn.Module):
                     resblocks=num_res,
                     activation=act,
                     arith_strategy=arith,
+                    peer_params=peer_params,
                 ))
             else:
                 raise ValueError('FM Operators type error')
         self.fm_ops = fm_ops  # should be a 'List'
 
-    def _prepare_frb(self, frb_type, dropout=0.):
+    def _prepare_frb(self, frb_type, dropout=0., peer_params: dict = None):
         if 'lightcnn' in frb_type:
             self.frb = lightcnn29(
                 self.fm_ops,
@@ -93,11 +95,11 @@ class MSML(nn.Module):
             )
         elif 'iresnet' in frb_type:
             if '18' in frb_type:
-                self.frb = iresnet18(self.fm_ops, dropout=dropout,)
+                self.frb = iresnet18(self.fm_ops, dropout=dropout, peer_params=peer_params)
             elif '34' in frb_type:
-                self.frb = iresnet34(self.fm_ops, dropout=dropout,)
+                self.frb = iresnet34(self.fm_ops, dropout=dropout, peer_params=peer_params)
             elif '50' in frb_type:
-                self.frb = iresnet50(self.fm_ops, dropout=dropout,)
+                self.frb = iresnet50(self.fm_ops, dropout=dropout, peer_params=peer_params)
             else:
                 error_info = 'IResNet type {} not found'.format(frb_type)
                 raise ValueError(error_info)

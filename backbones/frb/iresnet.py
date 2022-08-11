@@ -69,7 +69,9 @@ class IResNet(nn.Module):
                  zero_init_residual=False,
                  groups=1, width_per_group=64,
                  replace_stride_with_dilation=None,
-                 fp16=False):
+                 fp16=False,
+                 peer_params: dict = None,
+                 ):
         super(IResNet, self).__init__()
         self.fp16 = fp16
         self.inplanes = 64
@@ -114,11 +116,15 @@ class IResNet(nn.Module):
 
         """ Peer """
         from backbones.peer import arcface18
-        self.peer = arcface18().requires_grad_(False)
+        self.peer = None
+        if peer_params.get('use_ori'):
+            self.peer = arcface18().requires_grad_(False)
 
         """ Recover """
         from backbones.decoder import dm_decoder
-        self.decoder = dm_decoder(n_init=dim_feature)
+        self.decoder = lambda a, b: (None, 0)
+        if peer_params.get('use_decoder'):
+            self.decoder = dm_decoder(n_init=dim_feature)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -196,7 +202,7 @@ class IResNet(nn.Module):
             x = self.bn2(x)
 
             # recover
-            rec, l4 = self.decoder(x, ori) if ori is not None else None, 0.
+            _rec, l4 = self.decoder(x, ori) if ori is not None else None, 0.
 
             x = torch.flatten(x, 1)
             x = self.dropout(x)
@@ -381,31 +387,40 @@ def _iresnet(block, layers, fm_ops, pretrained, **kwargs):
 def iresnet18(fm_ops,
               pretrained=False,
               dim_feature=512,
-              dropout=0.):
+              dropout=0.,
+              peer_params=None,
+              ):
     return _iresnet(IBasicBlock, [2, 2, 2, 2],
                     fm_ops, pretrained,
                     dim_feature=dim_feature,
                     dropout=dropout,
+                    peer_params=peer_params,
                     )
 
 def iresnet34(fm_ops,
               pretrained=False,
               dim_feature=512,
-              dropout=0.):
+              dropout=0.,
+              peer_params=None,
+              ):
     return _iresnet(IBasicBlock, [3, 4, 6, 3],
                     fm_ops, pretrained,
                     dim_feature=dim_feature,
                     dropout=dropout,
+                    peer_params=peer_params,
                     )
 
 def iresnet50(fm_ops,
               pretrained=False,
               dim_feature=512,
-              dropout=0.):
+              dropout=0.,
+              peer_params=None,
+              ):
     return _iresnet(IBasicBlock, [3, 4, 14, 3],
                     fm_ops, pretrained,
                     dim_feature=dim_feature,
                     dropout=dropout,
+                    peer_params=peer_params,
                     )
 
 

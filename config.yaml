@@ -1,14 +1,14 @@
 # 1. dataset
-dataset: webface  # 'webface', 'ms1m-retinaface-t2'
+dataset: ms1m-retinaface-t2  # 'webface', 'ms1m-retinaface-t2'
 
 # 2. training recipe
 fp16: true
-batch_size: 80
+batch_size: 256
 
 # 3. model setting
 frb_type: iresnet18  # 'lightcnn', 'iresnet18'
 osb_type: unet  # 'unet'
-use_osb: ture  # ture, false
+use_osb: true  # true, false
 fm_layers:  # (fm1, fm2, fm3, fm4)
   - 1
   - 1
@@ -18,14 +18,19 @@ fm_params:  # (kernel_size, num_res, act, arith)
   - 3  # 3, 1
   - 2  # 0, 1, 2
   - 'sigmoid'  # 'tanh', 'sigmoid'
-  - 'sub'  # 'add', 'sub', 'div', 'mul'
+  - 'mul'  # 'add', 'sub', 'div', 'mul'
+peer_params:
+  use_ori: true  # for fm and frb
+  use_conv: true  # for fm
+  mask_trans: 'conv'  # 'conv', 'invert', for fm
+  use_decoder: true  # for frb
 header_type: AMArcFace  # 'Softmax', 'AMCosFace', 'AMArcFace'
-header_params:
+header_params:  # (s, m, a, k)
   - 64.0
   - 0.48
   - 0.0
   - 0.0
 
 # 4. experiment record
-exp_id: 9
-output_prefix: peer
+exp_id: 1
+output_prefix: arc18_msml_peer_dec

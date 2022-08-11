@@ -102,6 +102,16 @@ def config_model(cfg: edict):
         cfg.lr = 0.001  # 0.001 for pretrained model of batch size 512
         cfg.dim_feature = 256
 
+    """ Peer-Guided Default Params """
+    default_peer_params = edict({
+        'use_ori': False,
+        'use_conv': False,
+        'mask_trans': 'conv',
+        'use_decoder': False,
+    })
+    if cfg.get('peer_params') is None:
+        cfg.peer_params = default_peer_params
+
 """ 4. Experiment Record """
 def config_exp(cfg: edict):
     # cfg.exp_id = 1
@@ -121,5 +131,5 @@ def load_yaml(file_name: str):
 
 if __name__ == '__main__':
     print(conf)
-    config_init()
+    config_init(conf)
     print(conf)

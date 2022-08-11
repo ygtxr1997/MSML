@@ -7,10 +7,10 @@ __all__ = ['arcface18', 'arcface34', 'arcface50',]
 
 
 model_dir = {
-    'arcface18': '/home/yuange/code/SelfServer/MSML/backbones/pretrained/r18-backbone.pth',
-    'arcface34': '/home/yuange/code/SelfServer/MSML/backbones/pretrained/r34-backbone.pth',
-    'arcface50': '/home/yuange/code/SelfServer/MSML/backbones/pretrained/r50-backbone.pth',
-    'arcface100': '/home/yuange/code/SelfServer/MSML/backbones/pretrained/r100-backbone.pth',
+    'arcface18': './backbones/pretrained/r18-backbone.pth',
+    'arcface34': './backbones/pretrained/r34-backbone.pth',
+    'arcface50': './backbones/pretrained/r50-backbone.pth',
+    'arcface100': './backbones/pretrained/r100-backbone.pth',
 }
 
 

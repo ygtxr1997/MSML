@@ -114,6 +114,7 @@ def main(args):
         dropout=dropout,
         use_osb=conf.use_osb,
         fm_params=conf.fm_params,
+        peer_params=conf.peer_params,
     ).to(local_rank)
 
     """ Load Pretrained Weights """
@@ -239,13 +240,13 @@ def main(args):
         for step, batch in enumerate(train_loader):  # Read original and masked face mxnet dataset
             global_step += 1
 
-            """ (img, label)
-                (img, msk, label)
-                (img, msk, ori, label) 
+            """ (img, label), MXFaceDataset
+                (img, msk, label), FaceByRandOccMask (no KD)
+                (img, msk, ori, label), FaceByRandOccMask (with KD)
             """
             img, label = batch[0], batch[-1]
-            msk = batch[1] if len(batch) == 3 else None
-            ori = batch[2] if len(batch) == 4 else None
+            msk = batch[1] if len(batch) >= 3 else None
+            ori = batch[2] if len(batch) == 4 and conf.peer_params.use_ori else None
 
             """ op1: full classes """
             with amp.autocast(conf.fp16):
