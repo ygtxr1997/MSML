@@ -57,6 +57,9 @@ CUDA_VISIBLE_DEVICES=0 python test.py --network msml --weight_folder ires18_msml
 --dataset lfw --fill_type black --vis False
 ```
 
+* We provide our pre-trained arc18_msml on:
+  * [Google Drive](https://drive.google.com/drive/folders/18xEKq4iORG1ffNZXVaKofyuuZB-oW2e1?usp=sharing)
+
 ## Citation
 
 Please cite our paper by:
