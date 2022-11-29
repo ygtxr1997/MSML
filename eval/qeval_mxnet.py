@@ -30,6 +30,7 @@ import re
 from scipy.special import expit
 
 from datasets.augment.rand_occ import RandomBlock, RandomConnectedPolygon, RandomRealObject
+from datasets.load_dataset import EvalDataset
 
 from config import config_init, load_yaml
 
@@ -48,7 +49,7 @@ TASKS = {
         'ground_truth_label': list(np.zeros([3000 * 4 // divisor], dtype=np.int))
                               + list(np.ones([3000 * 4 // divisor], dtype=np.int)),
     },
-    'cfp': {
+    'cfp_fp': {
         'img_root': '/home/yuange/dataset/PKU-Masked-Face',
         'list_file': 'ver24000.list',
         'save_path': './features',
@@ -60,7 +61,7 @@ TASKS = {
         'ground_truth_label': list(np.zeros([3000 * 4 // divisor], dtype=np.int))
                               + list(np.ones([3000 * 4 // divisor], dtype=np.int)),
     },
-    'agedb': {
+    'agedb_30': {
         'img_root': '/home/yuange/dataset/PKU-Masked-Face',
         'list_file': 'ver24000.list',
         'save_path': './features',
@@ -78,7 +79,7 @@ TASKS = {
 class ExtractFeature(object):
     '''特征提取类'''
     def __init__(self, task, cfg, args):
-        self.img_root = task['img_root']
+        self.img_root = task['img_root']  # not used
         if not os.path.exists(self.img_root):
             self.img_root = '/GPUFS/sysu_zhenghch_1/yuange/datasets/' + self.img_root[len('/home/yuange/dataset/'):]
         self.list_file = task['list_file']
@@ -132,19 +133,6 @@ class ExtractFeature(object):
             weight = torch.load(self.weight_path)
             model = eval("backbone.{}".format('iresnet100'))(False).cuda()
             model.load_state_dict(weight)
-        elif self.model_name == 'arcface_r152':
-            # weight = torch.load('/home/yuange/code/SelfServer/ArcFace/r152-backbone.pth')
-            weight = torch.load('/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r152_mg/backbone.pth')
-            model = eval("backbone.{}".format('iresnet152'))(False).cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'iresnetfc':
-            # self.weight_path = '/home/yuange/code/SelfServer/ArcFace/r18-backbone.pth'
-            # self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_occ6/backbone.pth'
-            # self.weight_path = '/GPUFS/sysu_zhenghch_1/yuange/SelfServer/DeepInsight/insightface/recognition/arcface_torch/arcface_r18_angle/backbone.pth'
-            self.weight_path = './tmp_49018/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("backbone.{}".format('iresnetfc18'))(False).cuda()
-            model.load_state_dict(weight)
         elif self.model_name == 'msml':
             # self.weight_path = '/home/yuange/code/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_osb_r18_aaai/backbone.pth'
             # self.weight_path = '/GPUFS/sysu_zhenghch_1/yuange/SelfServer/DeepInsight/insightface/recognition/arcface_torch/ms1mv3_arcface_r18_osb18_mlm4_1115_drop01_swinmei/backbone.pth'
@@ -159,58 +147,14 @@ class ExtractFeature(object):
                                                         fp16=False,
                                                         use_osb=cfg.use_osb,
                                                         fm_params=cfg.fm_params,
+                                                        peer_params=cfg.peer_params,
                                                         ).cuda()
             if not self.pre_trained:
                 model.load_state_dict(weight)
-        elif self.model_name == 'ft_r18':
-            self.weight_path = './tmp_44106/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("backbone.{}".format('ft_r50'))(False,
-                                                        fp16=cfg.fp16,
-                                                        num_classes=cfg.num_classes,
-                                                        dim=cfg.model_set.dim,
-                                                        depth=cfg.model_set.depth,
-                                                        heads=cfg.model_set.heads,
-                                                        mlp_dim=cfg.model_set.mlp_dim,
-                                                        emb_dropout=cfg.model_set.emb_dropout,
-                                                        dim_head=cfg.model_set.dim_head,
-                                                        dropout=cfg.model_set.dropout
-                                                        ).cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'dpt_r18':
-            self.weight_path = './tmp_45124/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("backbone.{}".format('dpt_r34s3_ca1'))(False,
-                                                        fp16=cfg.fp16,
-                                                        num_classes=cfg.num_classes,
-                                                        dim=cfg.model_set.dim,
-                                                        depth=cfg.model_set.depth,
-                                                        heads_id=cfg.model_set.heads_id,
-                                                        heads_oc=cfg.model_set.heads_oc,
-                                                        mlp_dim_id=cfg.model_set.mlp_dim_id,
-                                                        mlp_dim_oc=cfg.model_set.mlp_dim_oc,
-                                                        emb_dropout=cfg.model_set.emb_dropout,
-                                                        dim_head_id=cfg.model_set.dim_head_id,
-                                                        dim_head_oc=cfg.model_set.dim_head_oc,
-                                                        dropout_id=cfg.model_set.dropout_id,
-                                                        dropout_oc=cfg.model_set.dropout_oc
-                                                        ).cuda()
-            model.load_state_dict(weight)
-        elif self.model_name == 'dptsa_r18':
-            self.weight_path = './tmp_42124/backbone.pth'
-            weight = torch.load(self.weight_path)
-            model = eval("backbone.{}".format('dpt_only_sa_r34'))(False,
-                                                          fp16=cfg.fp16,
-                                                          num_classes=cfg.num_classes,
-                                                          dim=cfg.model_set.dim,
-                                                          depth=cfg.model_set.depth,
-                                                          heads=cfg.model_set.heads,
-                                                          mlp_dim=cfg.model_set.mlp_dim,
-                                                          emb_dropout=cfg.model_set.emb_dropout,
-                                                          dim_head=cfg.model_set.dim_head,
-                                                          dropout=cfg.model_set.dropout,
-                                                        ).cuda()
-            model.load_state_dict(weight)
+        elif 'from2021' in self.model_name:
+            self.weight_path = ''
+            print('loading TPAMI2021 FROM model...')
+            model = backbones.From2021()
         else:
             raise ValueError('Error model type\n')
 
@@ -230,6 +174,10 @@ class ExtractFeature(object):
 
         if flip:
             img = img.transpose(Image.FLIP_LEFT_RIGHT)
+
+        width, height = self.cfg.out_size
+        resize_trans = transforms.CenterCrop((height, width))
+        img = resize_trans(img)
 
         common_trans = transforms.Compose([transforms.ToTensor()])
 
@@ -375,13 +323,15 @@ class ExtractFeature(object):
             if cfg.use_norm:
                 all_flip_var = all_flip_var.sub_(0.5).div_(0.5)  # [0, 1] to [-1, 1]
 
-        batch_size = 40 if not self.vis else 1
+        batch_size = 25 if not self.vis else 1
         total_step = num // batch_size
         assert batch_size * total_step == num
         for i in range(total_step):
             patch_input = all_input_var[i * batch_size : (i + 1) * batch_size]
             # feature, mask, identity = model(patch_input)
-            feature, final_seg = model(patch_input.cuda())
+            output = model(patch_input.cuda())
+            feature = output[0] if type(output) is tuple else output
+            final_seg = output[1] if type(output) is tuple else None
             features[i * batch_size : (i + 1) * batch_size] = feature.data.cpu().numpy()
 
             # vis
@@ -428,7 +378,9 @@ class ExtractFeature(object):
         for i in range(total_step):
             patch_input = all_flip_var[i * batch_size: (i + 1) * batch_size]
             # feature, mask, identity = model(patch_input)
-            feature, final_seg = model(patch_input.cuda())
+            output = model(patch_input.cuda())
+            feature = output[0] if type(output) is tuple else output
+            final_seg = output[1] if type(output) is tuple else None
             features_flip[i * batch_size: (i + 1) * batch_size] = feature.data.cpu().numpy()
 
             # vis
@@ -440,7 +392,7 @@ class ExtractFeature(object):
         if not os.path.exists(self.save_path):
             os.mkdir(self.save_path)
         save_file = os.path.join(self.save_path, '{}_{}.npy'.format(self.task_name,
-                                                                    self.weight_folder))
+                                                                    self.weight_folder.replace('/', '_')))
         np.save(save_file, features)
         return features
         # print("=> extract task finished, file is saved at '{}'".format(save_file))
@@ -463,7 +415,7 @@ class Verification(object):
 
     def _prepare(self):
         feature = np.load(os.path.join(self.save_path, '{}_{}.npy'.format(self.task_name,
-                                                                          self.weight_folder)))
+                                                                          self.weight_folder.replace('/', '_'))))
         feature = sklearn.preprocessing.normalize(feature)
         self.feature = feature
 
@@ -534,12 +486,13 @@ class Verification(object):
 def main():
 
     parser = argparse.ArgumentParser(description='PyTorch MSML Testing')
-    parser.add_argument('--network', type=str, default='dpt_r18', help='backbone network')
+    parser.add_argument('--network', type=str, default='msml', help='backbone network')
     parser.add_argument('--dataset', type=str, default='lfw', help='lfw, cfp_fp, agedb_30')
     parser.add_argument('--weight_folder', type=str, help='the folder containing pre-trained weights')
     parser.add_argument('--pre_trained', type=bool, default=False, help='use pre-trained lightcnn model')
     parser.add_argument('--fill_type', type=str, default='black', help='block occlusion fill type')
     parser.add_argument('--vis', type=bool, default=False, help='visualization of FM arith')
+    parser.add_argument('--no-occ', action='store_true', help='do not add occ')
     args = parser.parse_args()
 
     random.seed(4)
@@ -565,10 +518,17 @@ def main():
     path = os.path.join(cfg.rec, my_task['task_name'] + ".bin")
     all_img, issame_list = mx_reader.load_bin(path, (112, 112))
 
+    if args.network == 'from2021':
+        cfg.out_size = (96, 112)  # (w,h)
+
     """ Multi-Test """
     protocol = 'BB'
+    # lo_list = [40]
+    # hi_list = [41]
     lo_list = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90] if not args.vis else [35, ]
     hi_list = [1, 11, 21, 31, 41, 51, 61, 71, 81, 91] if not args.vis else [36, ]
+    if args.no_occ:
+        lo_list, hi_list = [0], [1]
     assert len(lo_list) == len(hi_list)
     # lo_list.reverse()
     # hi_list.reverse()
@@ -581,13 +541,14 @@ def main():
 
         lo, hi = lo_list[ind], hi_list[ind]
         print('random block range: [%d ~ %d)' % (lo, hi))
-        my_task['transform'] = transforms.Compose([transforms.Resize(cfg.out_size),
+        my_task['transform'] = transforms.Compose([transforms.CenterCrop((cfg.out_size[1], cfg.out_size[0])),
                                                    RandomBlock(lo, hi, fill=args.fill_type),
+                                                   # RandomConnectedPolygon(is_training=False),
                                                    transforms.ToTensor()])
 
         intsame_list = []
         for i in range(len(issame_list)):
-            flag = 0 if issame_list[i] else 1
+            flag = 0 if issame_list[i] else 1  # 0:is same
             intsame_list.append(flag)
         my_task['ground_truth_label'] = intsame_list
 

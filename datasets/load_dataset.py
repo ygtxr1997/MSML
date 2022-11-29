@@ -11,7 +11,8 @@ import PIL.Image as Image
 
 from datasets.augment.rand_occ import NoneOcc
 from datasets.augment.rand_occ import RandomRect, RandomEllipse, RandomConnectedPolygon
-from datasets.augment.rand_occ import RandomGlasses, RandomScarf, RandomRealObject
+from datasets.augment.rand_occ import RandomGlassesList, RandomScarf, RandomRealObject
+from datasets.augment.rand_occ import RealOcc
 
 
 """ Read face mxnet dataset and its offline masked version.
@@ -67,15 +68,20 @@ class FaceByRandOccMask(data.Dataset):
         3. Real-life objects
             - Glasses, Scarf, RealObject
         """
+        self.no_occ = NoneOcc()
         self.trans_occ = (
-            NoneOcc(),
             RandomRect(),
             RandomEllipse(),
             RandomConnectedPolygon(),
-            RandomGlasses('./datasets/augment/occluder/glasses_crop'),
+            RandomGlassesList(['./datasets/augment/occluder/glasses_crop',
+                               './datasets/augment/occluder/eleglasses_crop']),
             RandomScarf('./datasets/augment/occluder/scarf_crop'),
             RandomRealObject('./datasets/augment/occluder/object_train'),
+            # RealOcc(occ_type='rand'),
+            # RealOcc(occ_type='hand'),
+            # RealOcc(occ_type='coco'),
         )
+        self.all_trans = tuple(list(self.trans_occ) + [self.no_occ])
 
         """ Convert face and mask to tensor """
         self.face_to_tensor = transforms.ToTensor()
@@ -146,8 +152,17 @@ class FaceByRandOccMask(data.Dataset):
         if not mask_flag:  # Option-A. Add 6 types of occlusion
             src_img = mx.image.imdecode(src_img, to_rgb=1).asnumpy()  # original face, np:(112, 112, 3)
             src_img = Image.fromarray(src_img)
-            random_trans = self.trans_occ[np.random.randint(0, len(self.trans_occ))]
-            out_img, out_mask = random_trans(src_img)
+            if 'ms1m' in self.img_rec:
+                rand_trans = self.all_trans[np.random.randint(0, len(self.all_trans))]
+                out_img, out_mask = rand_trans(src_img)
+            elif 'casia' in self.img_rec:
+                if np.random.randint(0, 8) >= 4:  # P{rand_occ}=8/10*4/8=4/10
+                    random_occ_trans = self.trans_occ[np.random.randint(0, len(self.trans_occ))]
+                    out_img, out_mask = random_occ_trans(src_img)
+                else:  # P{no_occ}=8/10*4/8=4/10
+                    out_img, out_mask = self.no_occ(src_img)
+            else:
+                raise ValueError('self.img_rec %s not supported' % self.img_rec)
 
         else:  # Option-B. Add facial mask based on 3D method
             s1 = self.mask_out_rec.read_idx(img_idx)
@@ -327,14 +342,30 @@ class FaceByRandOccMask(data.Dataset):
 """ Original mxnet dataset
 """
 class MXFaceDataset(data.Dataset):
-    def __init__(self, root_dir, local_rank):
+    def __init__(self, root_dir, local_rank,
+                 out_size=(112, 112),
+                 use_norm=True,
+                 is_gray=False,
+                 ):
         super(MXFaceDataset, self).__init__()
+
         self.transform = transforms.Compose(
             [transforms.ToPILImage(),
-             transforms.RandomHorizontalFlip(),
-             transforms.ToTensor(),
-             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+             transforms.Resize(out_size)
              ])
+        norm_mean, norm_std = [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]
+        if is_gray:
+            self.transform = transforms.Compose([self.transform,
+                                                 transforms.Grayscale()])
+            norm_mean, norm_std = 0.5, 0.5
+        self.transform = transforms.Compose([self.transform,
+                                             transforms.RandomHorizontalFlip(),
+                                             transforms.ToTensor(),
+                                             ])
+        if use_norm:
+            self.transform = transforms.Compose([self.transform,
+                                                 transforms.Normalize(mean=norm_mean, std=norm_std)])
+
         self.root_dir = root_dir
         self.local_rank = local_rank
         path_imgrec = os.path.join(root_dir, 'train.rec')
@@ -434,6 +465,50 @@ class ReadMXNet(object):
 
         print('load finished', len(data_list))
         return data_list, issame_list
+
+
+"""
+Evaluation Benchmark
+"""
+class EvalDataset(data.Dataset):
+    def __init__(self,
+                 all_img: list = None,
+                 issame_list: list = None,
+                 pre_trans = None,
+                 norm_0_1: bool = False,
+                 ):
+        """
+        :param all_img: List[PIL.Image]
+        :param issame_list: List[int], 0 is same, 1 is diff
+        """
+        self.all_img = all_img
+        self.issame_list = issame_list  # 0:is same, 1:diff
+
+        self.pre_trans = pre_trans
+        self.post_trans = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # to [-1,1]
+        ])
+        if norm_0_1:
+            self.post_trans = transforms.Compose([
+            transforms.ToTensor(),  # to [0,1]
+        ])
+
+    def __getitem__(self, index):
+        img1 = self.all_img[index * 2]
+        img2 = self.all_img[index * 2 + 1]
+        same = self.issame_list[index]
+
+        img1 = self.pre_trans(img1)
+        img2 = self.pre_trans(img2)
+
+        img1 = self.post_trans(img1)
+        img2 = self.post_trans(img2)
+
+        return img1, img2, same
+
+    def __len__(self):
+        return len(self.issame_list)
 
 
 if __name__ == '__main__':

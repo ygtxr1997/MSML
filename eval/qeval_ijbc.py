@@ -75,14 +75,14 @@ use_detector_score = True  # if Ture, TestMode(D1)
 use_flip_test = True  # if Ture, TestMode(F1)
 job = args.job
 batch_size = args.batch_size
+size_hw = (112, 112)
 
 
 class Embedding(object):
     def __init__(self, prefix, data_shape, batch_size=1,
                  lo=0, hi=1,
                  ):
-        image_size = (112, 112)
-        self.image_size = image_size
+        self.image_size = (size_hw[1], size_hw[0])  # (W,H)
 
         self.model = self._get_model(prefix)
         self.model.eval()
@@ -125,6 +125,14 @@ class Embedding(object):
             ).cuda()
             msml.load_state_dict(weight)
             model = torch.nn.DataParallel(msml)
+        elif 'cosface2018' in prefix:
+            print('loading cosface2018 sphere model...')
+            model = backbones.cosface2018(input_size=size_hw)
+            model = torch.nn.DataParallel(model)
+        elif 'from2021' in prefix:
+            print('loading TPAMI2021 FROM model...')
+            model = backbones.From2021().cuda()
+            model = torch.nn.DataParallel(model)
         else:
             print('loading vanilla iresnet...')
             weight = torch.load(prefix)
@@ -151,20 +159,29 @@ class Embedding(object):
         tform.estimate(landmark5, self.src)
         M = tform.params[0:2, :]
         img = cv2.warpAffine(rimg,
-                             M, (self.image_size[1], self.image_size[0]),
-                             borderValue=0.0)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                             M, (self.image_size[0], self.image_size[1]),
+                             borderValue=0.0)  # dsize(W,H), image_size(W,H)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # (H,W,C)
 
-        from datasets.augment.rand_occ import RandomBlock
+        ''' Occlusion - random block '''
+        from datasets.augment.rand_occ import RandomBlock, RandomRealObject, RandomGlasses
         occ_trans = RandomBlock(lo=self.lo, hi=self.hi)
+        # occ_trans = RandomRealObject('datasets/augment/occluder/object_test/')
+        # occ_trans = RandomGlasses('./datasets/augment/occluder/eleglasses_crop')
         img = PIL.Image.fromarray(img)
         img = occ_trans(img)
         img = np.array(img)
 
+        ''' Occlusion - RealOcc (CVPRW 22) '''
+        # from eval.preprocess.RealOcc.image_infer import add_occ
+        # img = PIL.Image.fromarray(img)
+        # img, msk = add_occ(img)
+        # img = np.array(img)
+
         img_flip = np.fliplr(img)
         img = np.transpose(img, (2, 0, 1))  # 3*112*112, RGB
         img_flip = np.transpose(img_flip, (2, 0, 1))
-        input_blob = np.zeros((2, 3, self.image_size[1], self.image_size[0]), dtype=np.uint8)
+        input_blob = np.zeros((2, 3, self.image_size[1], self.image_size[0]), dtype=np.uint8)  # (N,C,H,W)
         input_blob[0] = img
         input_blob[1] = img_flip
         return input_blob
@@ -172,7 +189,7 @@ class Embedding(object):
     @torch.no_grad()
     def forward_db(self, batch_data):
         imgs = torch.Tensor(batch_data).cuda()
-        imgs.div_(255).sub_(0.5).div_(0.5)
+        imgs.div_(255).sub_(0.5).div_(0.5)  # (N,C,H,W)
         feat = self.model(imgs)
         if type(feat) is tuple:
             feat = feat[0]
@@ -224,7 +241,7 @@ def read_image_feature(path):
 
 def get_image_feature(img_path, files_list, model_path, epoch, gpu_id):
     batch_size = args.batch_size
-    data_shape = (3, 112, 112)
+    data_shape = (3, size_hw[0], size_hw[1])
 
     files = files_list
     print('files:', len(files))
@@ -233,10 +250,11 @@ def get_image_feature(img_path, files_list, model_path, epoch, gpu_id):
     batch = 0
     img_feats = np.empty((len(files), 1024), dtype=np.float32)
 
-    batch_data = np.empty((2 * batch_size, 3, 112, 112))
+    batch_data = np.empty((2 * batch_size, 3, size_hw[0], size_hw[1]))
     embedding = Embedding(model_path, data_shape, batch_size,
                           lo=args.lo, hi=args.hi)
-    for img_index, each_line in tqdm(enumerate(files[:len(files) - rare_size])):
+    img_index = 0
+    for each_line in tqdm(files[:len(files) - rare_size]):
         name_lmk_score = each_line.strip().split(' ')
         img_name = os.path.join(img_path, name_lmk_score[0])
         img = cv2.imread(img_name)
@@ -253,8 +271,9 @@ def get_image_feature(img_path, files_list, model_path, epoch, gpu_id):
                                          batch_size][:] = embedding.forward_db(batch_data)
             batch += 1
         faceness_scores.append(name_lmk_score[-1])
+        img_index += 1
 
-    batch_data = np.empty((2 * rare_size, 3, 112, 112))
+    batch_data = np.empty((2 * rare_size, 3, size_hw[0], size_hw[1]))
     embedding = Embedding(model_path, data_shape, rare_size)
     for img_index, each_line in enumerate(files[len(files) - rare_size:]):
         name_lmk_score = each_line.strip().split(' ')
@@ -426,6 +445,9 @@ print('Time: %.2f s. ' % (stop - start))
 # =============================================================
 start = timeit.default_timer()
 img_path = '%s/loose_crop' % image_path
+# img_path = '%s/real_occ' % image_path
+# img_path = '%s/object' % image_path
+# img_path = '%s/eyeglasses' % image_path
 img_list_path = '%s/meta/%s_name_5pts_score.txt' % (image_path, target.lower())
 img_list = open(img_list_path)
 files = img_list.readlines()

@@ -31,6 +31,10 @@ def align_rmfrd(dataset_root: str = '/gavin/datasets/rmfrd',
     identity_list = os.listdir(input_folder)
     for identity in tqdm(identity_list):
         in_id_folder = os.path.join(input_folder, identity)
+        if os.path.isfile(in_id_folder):
+            print('Skip file %s' % in_id_folder)
+            continue
+
         out_id_folder = os.path.join(output_folder, identity)
         if not os.path.exists(out_id_folder):
             os.mkdir(out_id_folder)
@@ -74,9 +78,15 @@ def align_rmfrd(dataset_root: str = '/gavin/datasets/rmfrd',
 
 
 if __name__ == '__main__':
-    align_rmfrd(output_folder='masked_whn_mtcnn',
-                method='mtcnn',
-                )
-    align_rmfrd(output_folder='masked_whn_pipnet',
-                method='pipnet',
-                )
+    # align_rmfrd(output_folder='masked_whn_mtcnn',
+    #             method='mtcnn',
+    #             )
+    # align_rmfrd(output_folder='masked_whn_pipnet',
+    #             method='pipnet',
+    #             )
+    align_rmfrd(
+        dataset_root='/gavin/datasets/msml/',
+        input_folder='mfr2',
+        output_folder='mfr2_mtcnn',
+        method='mtcnn',
+    )
