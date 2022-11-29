@@ -7,6 +7,7 @@ import math
 import cv2
 from PIL import Image
 from torchvision import transforms
+from eval.preprocess.RealOcc.image_infer import RealOcc
 
 cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
@@ -33,13 +34,15 @@ class RandomBlock(object):
         assert fill in RandomBlock.fill_list
 
     def __call__(self, img):
+        # if np.random.randint(100) > 50:
+        #     return img
         ratio = np.random.randint(self.lo, self.hi) * 0.01
         img = self._block_occ(img, ratio)
         return img
 
     def _block_occ(self, img, ratio):
         width, height = img.size[0], img.size[1]
-        assert width == height
+        # assert width == height
         img_occ = copy.deepcopy(img)
 
         if ratio == 0:
@@ -220,6 +223,7 @@ class RandomConnectedPolygon(object):
                  lo_points_num: int = 4,
                  hi_points_num: int = 11,
                  use_circle: bool = True,
+                 is_training: bool = True,
                  ):
         self.connected_num = connected_num
         self.ratio = ratio
@@ -227,6 +231,7 @@ class RandomConnectedPolygon(object):
         self.lo_points_num = lo_points_num
         self.hi_points_num = hi_points_num
         self.use_circle = use_circle
+        self.is_training = is_training
 
     def __call__(self, img):
         face_arr = np.array(img)
@@ -250,7 +255,10 @@ class RandomConnectedPolygon(object):
         img_surpass = Image.fromarray(face_arr)
         msk = Image.fromarray(msk)
 
-        return img_surpass, msk
+        if self.is_training:
+            return img_surpass, msk
+        else:
+            return img_surpass
 
     def _get_polygon(self, height, width):
         """
@@ -355,12 +363,14 @@ class RandomGlasses(object):
     def __call__(self, img):
         mode = img.mode  # 'L' or 'RGB'
         height, width = img.size[1], img.size[0]
+        occ_height = height * (self.occ_height / 120)
+        occ_width = width * (self.occ_width / 120)
 
         """ 1. Get an occlusion image from the preloaded list, and resize it randomly """
         glasses = self.object_imgs[np.random.randint(0, self.glasses_num)]  # np-(h, w, RGBA)
         glasses = Image.fromarray(glasses, mode='RGBA')  # PIL-(h, w, RGBA)
-        occ_width = int(self.occ_width * np.random.uniform(1 / self.width_scale, self.width_scale))  # w'
-        occ_height = int(self.occ_height * np.random.uniform(1 / self.height_scale, self.height_scale))  # h'
+        occ_width = int(occ_width * np.random.uniform(1 / self.width_scale, self.width_scale))  # w'
+        occ_height = int(occ_height * np.random.uniform(1 / self.height_scale, self.height_scale))  # h'
         glasses = glasses.resize((occ_width, occ_height))  # PIL-(h', w', RGBA)
 
         """ 2. Split Alpha channel and RGB channels, and convert RGB channels into img.mode """
@@ -377,7 +387,7 @@ class RandomGlasses(object):
 
         face_crop = face_arr[y_offset: y_offset + occ_height,
                              x_offset: x_offset + occ_width]  # Crop the face according to the glasses position
-        glasses_arr[alpha == 0] = face_crop[alpha == 0]  # 'Alpha == 0' denotes transparent pixel
+        glasses_arr[alpha <= 10] = face_crop[alpha <= 10]  # 'Alpha == 0' denotes transparent pixel
         face_arr[y_offset: y_offset + occ_height,
                  x_offset: x_offset + occ_width] = glasses_arr  # Overlap, np-(H, W, mode)
 
@@ -392,6 +402,20 @@ class RandomGlasses(object):
             x_offset: x_offset + occ_width] = glasses_arr
         msk = Image.fromarray(msk).convert('L')
 
+        return img_glassesed, msk
+
+
+class RandomGlassesList(object):
+    def __init__(self,
+                 glasses_path_list: list,
+                 ):
+        self.trans_list = []
+        for glasses_path in glasses_path_list:
+            self.trans_list.append(RandomGlasses(glasses_path))
+
+    def __call__(self, img):
+        trans_idx = np.random.randint(0, len(self.trans_list))
+        img_glassesed, msk = self.trans_list[trans_idx](img)
         return img_glassesed, msk
 
 
