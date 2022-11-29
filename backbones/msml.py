@@ -23,6 +23,7 @@ class MSML(nn.Module):
                  fm_layers: tuple,
                  num_classes: int,
                  fp16: bool = False,
+                 frb_pretrained: bool = False,
                  fm_params: tuple = (3, 2, 'tanh', 'add'),  # (S, N, act, arith)
                  header_type: str = 'Softmax',
                  header_params: tuple = (64.0, 0.5, 0.0, 0.0),  # (s, m, a, k)
@@ -34,7 +35,7 @@ class MSML(nn.Module):
         assert len(fm_layers) == 4
         self._prepare_shapes(frb_type, osb_type)
         self._prepare_fm(fm_layers, fm_params, peer_params)
-        self._prepare_frb(frb_type, dropout, peer_params)
+        self._prepare_frb(frb_type, dropout, peer_params, header_type, pretrained=frb_pretrained)
         self._prepare_osb(osb_type)
 
         self.num_classes = num_classes
@@ -87,19 +88,27 @@ class MSML(nn.Module):
                 raise ValueError('FM Operators type error')
         self.fm_ops = fm_ops  # should be a 'List'
 
-    def _prepare_frb(self, frb_type, dropout=0., peer_params: dict = None):
+    def _prepare_frb(self, frb_type, dropout=0., peer_params: dict = None,
+                     header_type: str = "",
+                     pretrained=False):
+        peer_params["header_type"] = header_type
         if 'lightcnn' in frb_type:
             self.frb = lightcnn29(
                 self.fm_ops,
+                pretrained=pretrained,
                 dropout=dropout,
+                peer_params=peer_params
             )
         elif 'iresnet' in frb_type:
             if '18' in frb_type:
-                self.frb = iresnet18(self.fm_ops, dropout=dropout, peer_params=peer_params)
+                self.frb = iresnet18(self.fm_ops, pretrained=pretrained,
+                                     dropout=dropout, peer_params=peer_params)
             elif '34' in frb_type:
-                self.frb = iresnet34(self.fm_ops, dropout=dropout, peer_params=peer_params)
+                self.frb = iresnet34(self.fm_ops, pretrained=pretrained,
+                                     dropout=dropout, peer_params=peer_params)
             elif '50' in frb_type:
-                self.frb = iresnet50(self.fm_ops, dropout=dropout, peer_params=peer_params)
+                self.frb = iresnet50(self.fm_ops, pretrained=pretrained,
+                                     dropout=dropout, peer_params=peer_params)
             else:
                 error_info = 'IResNet type {} not found'.format(frb_type)
                 raise ValueError(error_info)
@@ -167,16 +176,24 @@ class MSML(nn.Module):
 
 if __name__ == '__main__':
 
+    default_peer_params = {
+        "use_ori": True,
+        "use_conv": True,
+        "mask_trans": 'conv',
+        "use_decoder": False
+    }
+
     """ 1. IResNet accepts RGB images """
-    print('-------- Test for msml(iresnet-18, unet-r18, rgb-112) --------')
+    print('-------- Test for msml (iresnet-18, unet-r18, rgb-112) --------')
     msml = MSML(
-        frb_type='iresnet18',
+        frb_type='iresnet50',
         osb_type='unet',
         fm_layers=(1, 1, 1, 1),
         num_classes=98310,
         fp16=True,
-        header_type='AMCosFace',
-        header_params=(64.0, 0.4, 0.0, 0.0)
+        header_type='AMArcFace',
+        header_params=(64.0, 0.4, 0.0, 0.0),
+        peer_params=default_peer_params,
     ).cuda()
     img = torch.zeros((1, 3, 112, 112)).cuda()
     msml.eval()
@@ -184,19 +201,21 @@ if __name__ == '__main__':
     print(pred_cls.shape, pred_seg.shape)
 
     import thop
-    flops, params = thop.profile(msml, inputs=(img,))
-    print('flops', flops / 1e9, 'params', params / 1e6)
+    flops, params = thop.profile(msml, inputs=(img,), verbose=False)
+    print('#Params=%.2fM, GFLOPS=%.2f' % (params / 1e6, flops / 1e9))
 
     """ 2. LightCNN accepts Gray-Scale images """
     print('-------- Test for msml(lightcnn, unet-r18, gray-128) --------')
     msml = MSML(
         frb_type='lightcnn',
         osb_type='unet',
-        fm_layers=(0, 0, 0, 0),
+        fm_layers=(1, 1, 1, 1),
+        frb_pretrained=True,
         num_classes=98310,
         fp16=False,
-        header_type='AMArcFace',
-        header_params=(64.0, 0.5, 0.0, 0.0)
+        header_type='Softmax',
+        header_params=(64.0, 0.5, 0.0, 0.0),
+        peer_params=default_peer_params,
     ).cuda()
     img = torch.zeros((1, 1, 128, 128)).cuda()
     msml.eval()
@@ -204,5 +223,5 @@ if __name__ == '__main__':
     print(pred_cls.shape, pred_seg.shape)
 
     import thop
-    flops, params = thop.profile(msml, inputs=(img,))
-    print('flops', flops / 1e9, 'params', params / 1e6)
+    flops, params = thop.profile(msml, inputs=(img,), verbose=False)
+    print('#Params=%.2fM, GFLOPS=%.2f' % (params / 1e6, flops / 1e9))

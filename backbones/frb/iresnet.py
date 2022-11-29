@@ -1,8 +1,17 @@
+import os.path
+
 import torch
 from torch import nn
 
 __all__ = ['iresnet18', 'iresnet34', 'iresnet50',
-           'iresnet18_v', 'iresnet34_v', 'iresnet50_v',]
+           'iresnet18_v', 'iresnet28_v', 'iresnet34_v', 'iresnet50_v',]
+
+
+model_dir = {
+    'arc18': '/gavin/code/MSML/backbones/pretrained/',
+    'arc34': '/gavin/code/MSML/backbones/pretrained/',
+    'arc50': '/gavin/code/MSML/out/arc50_no_occ_2/backbone.pth'
+}
 
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
@@ -115,10 +124,24 @@ class IResNet(nn.Module):
         self.fm_ops = nn.ModuleList(fm_ops)
 
         """ Peer """
-        from backbones.peer import arcface18
-        self.peer = None
+        from backbones.peer import arcface18, arcface34, arcface50
+        from backbones.peer import cosface50_casia
+        self.peer = None  # peer type is consistent with msml.header_type
+        self.header_type = peer_params.get('header_type').lower()
         if peer_params.get('use_ori'):
-            self.peer = arcface18().requires_grad_(False)
+            if 'arc' in self.header_type:
+                if layers == [2, 2, 2, 2]:  # iresnet18
+                    self.peer = arcface18().requires_grad_(False)
+                elif layers == [3, 4, 6, 3]:  # iresnet34
+                    self.peer = arcface34().requires_grad_(False)
+                elif layers == [3, 4, 14, 3]:  # iresnet50
+                    self.peer = arcface50().requires_grad_(False)
+            elif 'cos' in self.header_type:
+                if layers == [3, 4, 14, 3]:  # iresnet50
+                    print('[Peer] cos50_casia loaded.')
+                    self.peer = cosface50_casia().requires_grad_(False)
+            else:
+                raise ValueError('Error type of iresnet, cannot decide peer network.')
 
         """ Recover """
         from backbones.decoder import dm_decoder
@@ -346,8 +369,14 @@ def _iresnet_v(arch, block, layers, pretrained, progress, **kwargs):
         raise ValueError()
     return model
 
+
 def iresnet18_v(pretrained=False, progress=True, **kwargs):
     return _iresnet_v('iresnet18', IBasicBlock, [2, 2, 2, 2], pretrained,
+                    progress, **kwargs)
+
+
+def iresnet28_v(pretrained=False, progress=True, **kwargs):
+    return _iresnet_v('iresnet28', IBasicBlock, [3, 4, 3, 3], pretrained,
                     progress, **kwargs)
 
 
@@ -378,10 +407,38 @@ def iresnet200_v(pretrained=False, progress=True, **kwargs):
 
 """ FRB version of IResNet
 """
-def _iresnet(block, layers, fm_ops, pretrained, **kwargs):
+def _iresnet(arch, block, layers, fm_ops, pretrained, **kwargs):
     model = IResNet(block, layers, fm_ops, **kwargs)
     if pretrained:
-        raise ValueError('No pretrained model for iresnet')
+        model_type = arch.replace('iresnet', 'arc')  # 'iresnet50' to 'arc50'
+        if os.path.isfile(model_dir[model_type]):
+            pre_trained_weights = torch.load(model_dir[model_type],
+                                             map_location=torch.device('cpu'))
+        else:
+            error_info = 'Make sure the file {' + model_dir['arc50'] + '} exists!'
+            raise FileNotFoundError(error_info)
+
+        # get pretrained 'arcxx' layers and insert to tmp
+        from collections import OrderedDict
+        tmp_dict = OrderedDict()
+        for key in pre_trained_weights:
+            # print(key)
+            # > frb.conv1.weight
+            # if 'fc2' not in key:  # do not skip classification FC layer
+            if 'frb' in key:  # only load frb weights
+                tmp_dict[key[len('frb.'):]] = pre_trained_weights[key]
+
+        # get 'iresnet' model layers which don't exist in 'arcxx' and insert to tmp
+        model_dict = model.state_dict()
+        for key in model_dict:
+            # print(key)
+            # > conv1.weight
+            if key not in tmp_dict:  # 'iresnet' may include 'fm_ops', but 'arcxx' does not
+                tmp_dict[key] = model_dict[key]
+
+        print('=> Loading pre-trained %s ...' % model_type)
+        model.load_state_dict(tmp_dict)
+        print('=> Loaded.')
     return model
 
 def iresnet18(fm_ops,
@@ -390,7 +447,7 @@ def iresnet18(fm_ops,
               dropout=0.,
               peer_params=None,
               ):
-    return _iresnet(IBasicBlock, [2, 2, 2, 2],
+    return _iresnet('iresnet18', IBasicBlock, [2, 2, 2, 2],
                     fm_ops, pretrained,
                     dim_feature=dim_feature,
                     dropout=dropout,
@@ -403,7 +460,7 @@ def iresnet34(fm_ops,
               dropout=0.,
               peer_params=None,
               ):
-    return _iresnet(IBasicBlock, [3, 4, 6, 3],
+    return _iresnet('iresnet34', IBasicBlock, [3, 4, 6, 3],
                     fm_ops, pretrained,
                     dim_feature=dim_feature,
                     dropout=dropout,
@@ -416,7 +473,7 @@ def iresnet50(fm_ops,
               dropout=0.,
               peer_params=None,
               ):
-    return _iresnet(IBasicBlock, [3, 4, 14, 3],
+    return _iresnet('iresnet50', IBasicBlock, [3, 4, 14, 3],
                     fm_ops, pretrained,
                     dim_feature=dim_feature,
                     dropout=dropout,
@@ -425,74 +482,94 @@ def iresnet50(fm_ops,
 
 
 if __name__ == '__main__':
+    import thop
 
     batch_size = 1
+    default_peer_params = {
+        'use_ori': False,
+        'use_conv': False,
+        'mask_trans': 'conv',
+        'use_decoder': False,
+    }
 
-    # """ Prepare for Feature Masking Operators """
-    # from backbones.fm import FMCnn, FMNone
-    # heights = [56, 28, 14, 7]
-    # f_channels = [64, 128, 256, 512]
-    # s_channels = [18, 18, 18, 18]
-    # fm_layers = [1, 1, 1, 1]
-    #
-    # fm_ops = []
-    # for i in range(4):
-    #     fm_type = fm_layers[i]
-    #     print('fm_type', i, '=', fm_type)
-    #     if fm_type == 0:
-    #         fm_ops.append(FMNone())
-    #     elif fm_type == 1:
-    #         fm_ops.append(FMCnn(
-    #             height=heights[i],
-    #             width=heights[i],
-    #             channel_f=f_channels[i]
-    #         ))
-    #     else:
-    #         raise ValueError
-    #
-    # """ Prepare for Occlusion Segmentation Representations """
-    # segs = [torch.randn(batch_size, 18, 56, 56),  # seg3
-    #         torch.randn(batch_size, 18, 28, 28),  # seg2
-    #         torch.randn(batch_size, 18, 14, 14),  # seg1
-    #         torch.randn(batch_size, 18, 7, 7),]  # seg0
-    #
-    # """ Test for iresnet18 """
-    # ires = iresnet18(
+    """ Prepare for Feature Masking Operators """
+    from backbones.fm import FMCnn, FMNone
+    heights = [56, 28, 14, 7]
+    f_channels = [64, 128, 256, 512]
+    s_channels = [18, 18, 18, 18]
+    fm_layers = [1, 1, 1, 1]
+
+    fm_ops = []
+    for i in range(4):
+        fm_type = fm_layers[i]
+        print('fm_type', i, '=', fm_type)
+        if fm_type == 0:
+            fm_ops.append(FMNone())
+        elif fm_type == 1:
+            fm_ops.append(FMCnn(
+                height=heights[i],
+                width=heights[i],
+                channel_f=f_channels[i],
+                peer_params=default_peer_params,
+            ))
+        else:
+            raise ValueError
+
+    """ Prepare for Occlusion Segmentation Representations """
+    segs = [torch.randn(batch_size, 18, 56, 56),  # seg3
+            torch.randn(batch_size, 18, 28, 28),  # seg2
+            torch.randn(batch_size, 18, 14, 14),  # seg1
+            torch.randn(batch_size, 18, 7, 7),]  # seg0
+
+    """ Test for iresnet50 (msml) """
+    # ires = iresnet50(
     #     fm_ops=fm_ops,
+    #     pretrained=True,
+    #     peer_params=default_peer_params,
     # )
     # img = torch.randn((batch_size, 3, 112, 112))
     # ires.eval()
-    # feature = ires(img, segs)
+    # feature, loss = ires(img, segs, None)
     # print(feature.shape)
     #
     # import thop
-    # flops, params = thop.profile(ires, inputs=(img, segs))
-    # print('flops', flops / 1e9, 'params', params / 1e6)
+    # flops, params = thop.profile(ires, inputs=(img, segs, None))
+    # print('#Params=%.2fM, GFLOPS=%.2f' % (params / 1e6, flops / 1e9))
+
+    """ Test for iresnet (vanilla) """
+    ires_v = iresnet50_v()
+    img = torch.randn((batch_size, 3, 112, 112))
+    ires_v.eval()
+    feature = ires_v(img)
+    print(feature.shape)
+
+    flops, params = thop.profile(ires_v, inputs=(img, ), verbose=False)
+    print('#Params=%.2fM, GFLOPS=%.2f' % (params / 1e6, flops / 1e9))
 
     """ IResNet vanilla """
-    model = iresnet18_v().cuda()
-    weight = torch.load('demo/backbone.pth')
-    model.load_state_dict(weight)
-    model.eval()
-
-    from PIL import Image
-    img_1 = Image.open('demo/retina_1.png').convert('RGB')
-    img_2 = Image.open('demo/retina_2.png').convert('RGB')
-
-    import torchvision.transforms as transforms
-    trans = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5, 0.5, 0.5],
-                             std=[0.5, 0.5, 0.5])
-    ])
-    x = trans(img_1).cuda()
-    y = trans(img_2).cuda()
-    x = x[None, :, :, :]
-    y = y[None, :, :, :]
-
-    x = model(x)
-    y = model(y)
-
-    res = torch.cosine_similarity(x, y, dim=-1).cpu()
-    print(res)
-    # print('cosine sim = %.4f' % res)
+    # model = iresnet18_v().cuda()
+    # weight = torch.load('demo/backbone.pth')
+    # model.load_state_dict(weight)
+    # model.eval()
+    #
+    # from PIL import Image
+    # img_1 = Image.open('demo/retina_1.png').convert('RGB')
+    # img_2 = Image.open('demo/retina_2.png').convert('RGB')
+    #
+    # import torchvision.transforms as transforms
+    # trans = transforms.Compose([
+    #     transforms.ToTensor(),
+    #     transforms.Normalize(mean=[0.5, 0.5, 0.5],
+    #                          std=[0.5, 0.5, 0.5])
+    # ])
+    # x = trans(img_1).cuda()
+    # y = trans(img_2).cuda()
+    # x = x[None, :, :, :]
+    # y = y[None, :, :, :]
+    #
+    # x = model(x)
+    # y = model(y)
+    #
+    # res = torch.cosine_similarity(x, y, dim=-1).cpu()
+    # print(res)
+    # # print('cosine sim = %.4f' % res)

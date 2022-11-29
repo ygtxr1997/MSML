@@ -3,7 +3,8 @@ import os
 import torch
 from torch import nn
 
-__all__ = ['arcface18', 'arcface34', 'arcface50',]
+__all__ = ['arcface18', 'arcface34', 'arcface50',
+           'cosface50_casia',]
 
 
 model_dir = {
@@ -11,6 +12,7 @@ model_dir = {
     'arcface34': './backbones/pretrained/r34-backbone.pth',
     'arcface50': './backbones/pretrained/r50-backbone.pth',
     'arcface100': './backbones/pretrained/r100-backbone.pth',
+    'cosface50_casia': './backbones/pretrained/cos50_no_occ_2.pth',
 }
 
 
@@ -212,22 +214,27 @@ def _iresnet_v(arch, block, layers, pretrained, progress, **kwargs):
 
 def arcface18(pretrained=True, progress=True, **kwargs):
     return _iresnet_v('arcface18', IBasicBlock, [2, 2, 2, 2], pretrained,
-                    progress, **kwargs)
+                      progress, **kwargs)
 
 
 def arcface34(pretrained=True, progress=True, **kwargs):
     return _iresnet_v('arcface34', IBasicBlock, [3, 4, 6, 3], pretrained,
-                    progress, **kwargs)
+                      progress, **kwargs)
 
 
 def arcface50(pretrained=True, progress=True, **kwargs):
     return _iresnet_v('arcface50', IBasicBlock, [3, 4, 14, 3], pretrained,
-                    progress, **kwargs)
+                      progress, **kwargs)
 
 
 def arcface100(pretrained=True, progress=True, **kwargs):
     return _iresnet_v('arcface100', IBasicBlock, [3, 13, 30, 3], pretrained,
-                    progress, **kwargs)
+                      progress, **kwargs)
+
+
+def cosface50_casia(pretrained=True, progress=True, **kwargs):
+    return _iresnet_v('cosface50_casia', IBasicBlock, [3, 4, 14, 3], pretrained,
+                      progress, **kwargs)
 
 
 # def iresnet152_v(pretrained=False, progress=True, **kwargs):

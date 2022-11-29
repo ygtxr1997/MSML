@@ -18,7 +18,7 @@ __all__ = ['lightcnn29',]
 model_dir = {
     'LightCNN-9': '/home/yuange/code/SelfServer/MSML/backbones/pretrained/LightCNN_9Layers_checkpoint.pth.tar',
     'LightCNN-29': '/home/yuange/code/SelfServer/MSML/backbones/pretrained/LightCNN_29Layers_checkpoint.pth.tar',
-    'LightCNN-29v2': '/home/yuange/code/SelfServer/MSML/backbones/pretrained/LightCNN_29Layers_V2_checkpoint.pth.tar'
+    'LightCNN-29v2': '/gavin/code/MSML/backbones/pretrained/LightCNN_29Layers_V2_checkpoint.pth.tar'
 }
 
 
@@ -148,6 +148,7 @@ class network_29layers_v2(nn.Module):
                  fm_ops,
                  dim_feature=256,
                  dropout=0.,
+                 peer_params: dict = None,
                  ):
         super(network_29layers_v2, self).__init__()
         self.conv1 = mfm(1, 48, 5, 1, 2)
@@ -171,13 +172,24 @@ class network_29layers_v2(nn.Module):
         assert len(fm_ops) == 4
         self.fm_ops = nn.ModuleList(fm_ops)
 
+        """ Peer """
+        from backbones.peer import lightcnn29_v2
+        self.peer = None
+        self.header_type = peer_params.get('header_type').lower()
+        if peer_params.get('use_ori'):
+            if 'softmax' in self.header_type:
+                self.peer = lightcnn29_v2().requires_grad_(False)
+                self.peer.eval()
+            else:
+                raise ValueError('Error type of lightcnn, cannot decide peer network.')
+
     def _make_layer(self, block, num_blocks, in_channels, out_channels):
         layers = []
         for i in range(0, num_blocks):
             layers.append(block(in_channels, out_channels))
         return nn.Sequential(*layers)
 
-    def forward(self, x, segs):
+    def forward(self, x, segs, ori):
         """ LightCNN in FRB
         input:
             img     - (B, 1, 128, 128)
@@ -188,32 +200,41 @@ class network_29layers_v2(nn.Module):
         output:
             feature - (B, dim_feature)
         """
+
+        # Peer knowledge
+        ft0, ft1, ft2, ft3 = None, None, None, None
+        if ori is not None:
+            _, inter = self.peer(ori)
+            ft0, ft1, ft2, ft3 = inter[0], inter[1], inter[2], inter[3]
+
         x = self.conv1(x)
         x = F.max_pool2d(x, 2) + F.avg_pool2d(x, 2)
-        x = self.fm_ops[0](x, segs[0])
+        x, l = self.fm_ops[0](x, segs[0], ft0)
 
         x = self.block1(x)
         x = self.group1(x)
         x = F.max_pool2d(x, 2) + F.avg_pool2d(x, 2)
-        x = self.fm_ops[1](x, segs[1])
+        x, l1 = self.fm_ops[1](x, segs[1], ft1)
 
         x = self.block2(x)
         x = self.group2(x)
         x = F.max_pool2d(x, 2) + F.avg_pool2d(x, 2)
-        x = self.fm_ops[2](x, segs[2])
+        x, l2 = self.fm_ops[2](x, segs[2], ft2)
 
         x = self.block3(x)
         x = self.group3(x)
         x = self.block4(x)
         x = self.group4(x)
         x = F.max_pool2d(x, 2) + F.avg_pool2d(x, 2)
-        x = self.fm_ops[3](x, segs[3])
+        x, l3 = self.fm_ops[3](x, segs[3], ft3)
 
         x = x.view(x.size(0), -1)
         x = self.fc(x)
         x = self.drop(x)
 
-        return x
+        l = l + l1 + l2 + l3 if ori is not None else 0.  # KD
+
+        return x, l * 1.0
 
 
 """ Vanilla LightCNN
@@ -238,6 +259,7 @@ def lightcnn29(fm_ops,
                pretrained=True,
                dim_feature=256,
                dropout=0.,
+               peer_params=None,
                ):
     if pretrained:
         # customized model based on 'lightcnn'
@@ -245,6 +267,7 @@ def lightcnn29(fm_ops,
                                     fm_ops=fm_ops,
                                     dim_feature=dim_feature,
                                     dropout=dropout,
+                                    peer_params=peer_params,
                                     )
 
         # load pretrained weight
@@ -271,26 +294,35 @@ def lightcnn29(fm_ops,
             if key not in tmp_dict:
                 tmp_dict[key] = model_dict[key]
 
-        print('=> Loading pre-trained LightCNN-29v2 ...')
         model.load_state_dict(tmp_dict)
-        print('=> Loaded.')
+        print('=> [FRB] pre-trained LightCNN-29v2 Loaded.')
 
     else:
         model = network_29layers_v2(resblock, [1, 2, 3, 4],
                                     fm_ops=fm_ops,
-                                    dim_feature=dim_feature)
+                                    dim_feature=dim_feature,
+                                    peer_params=peer_params,
+                                    )
 
     return model
 
 
 if __name__ == '__main__':
 
+    default_peer_params = {
+        'use_ori': True,
+        'use_conv': True,
+        'mask_trans': 'conv',
+        'use_decoder': False,
+        'header_type': 'Softmax'
+    }
+
     """ Prepare for Feature Masking Operators """
     from backbones.fm import FMCnn, FMNone
     heights = [64, 32, 16, 8]
     f_channels = [48, 96, 192, 128]
     s_channels = [18, 18, 18, 18]
-    fm_layers = [0, 1, 1, 0]
+    fm_layers = [1, 1, 1, 1]
 
     fm_ops = []
     for i in range(4):
@@ -301,7 +333,8 @@ if __name__ == '__main__':
             fm_ops.append(FMCnn(
                 height=heights[i],
                 width=heights[i],
-                channel_f=f_channels[i]
+                channel_f=f_channels[i],
+                peer_params=default_peer_params,
             ))
         else:
             raise ValueError
@@ -316,11 +349,12 @@ if __name__ == '__main__':
     light = lightcnn29(
         fm_ops=fm_ops,
         pretrained=True,
+        peer_params=default_peer_params,
     )
     img = torch.randn((1, 1, 128, 128))
-    feature = light(img, segs)
+    feature, loss = light(img, segs, None)  # x_ori is not available during testing
     print(feature.shape)
 
     import thop
-    flops, params = thop.profile(light, inputs=(img, segs))
-    print('flops', flops / 1e9, 'params', params / 1e6)
+    flops, params = thop.profile(light, inputs=(img, segs, None), verbose=False)
+    print('#Params=%.2fM, GFLOPS=%.2f' % (params / 1e6, flops / 1e9))

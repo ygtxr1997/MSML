@@ -1,5 +1,6 @@
 import os
 
+from torch.utils.data import DataLoader, Dataset
 from PIL import Image
 import numpy as np
 import cv2
@@ -209,23 +210,50 @@ def add_occ(ori_img: Image,
     return result_img, occlusion_mask
 
 
-# TODO: multi thread
+class IJBDataset(Dataset):
+    def __init__(self,
+                 ijb_folder: str = '/gavin/datasets/msml/ijb/IJBB/loose_crop',
+                 ):
+        super(IJBDataset, self).__init__()
+        self.root = ijb_folder
+        self.img_list = os.listdir(ijb_folder)
+
+        from datasets.augment.rand_occ import RandomRealObject, RandomGlasses
+        # self.occ_trans = RandomRealObject('/gavin/code/MSML/datasets/augment/occluder/object_test/')
+        self.occ_trans = RandomGlasses('/gavin/code/MSML/datasets/augment/occluder/eleglasses_crop/')
+
+    def __getitem__(self, index):
+        img_name = self.img_list[index]
+        img = Image.open(os.path.join(self.root, img_name), 'r')
+        img, occ = self.occ_trans(img)
+        img = np.array(img)
+        return img, img_name
+
+    def __len__(self):
+        return len(self.img_list)
+
+
 def iterate_ijb(ijb_folder: str = '/gavin/datasets/msml/ijb/IJBB/loose_crop',
-                out_folder: str = '/gavin/datasets/msml/ijb/IJBB/real_occ',
+                out_folder: str = '/gavin/datasets/msml/ijb/IJBB/eyeglasses',
                 ):
+    print('output to %s' % out_folder)
     os.makedirs(out_folder, exist_ok=True)
-    dataset_list = os.listdir(ijb_folder)
+    ijb_dataset = IJBDataset(ijb_folder=ijb_folder)
+    eval_loader = DataLoader(dataset=ijb_dataset,
+                             batch_size=1,
+                             num_workers=24,
+                             )
+
     idx = 0
-    for img_name in tqdm(dataset_list):
+    for batch in tqdm(eval_loader):
         idx += 1
-        img = Image.open(os.path.join(ijb_folder, img_name), 'r')
-
-        # img, occ = add_occ(img)
-        from datasets.augment.rand_occ import RandomRealObject
-        occ_trans = RandomRealObject('datasets/augment/occluder/object_test/')
-        img, occ = occ_trans(img)
-
+        img, img_name = batch
+        img = Image.fromarray(img[0].numpy())
+        img_name = img_name[0]
         img.save(os.path.join(out_folder, img_name))
+        if idx > 100:
+            continue
+            # exit(0)
 
 
 if __name__ == '__main__':
@@ -236,24 +264,25 @@ if __name__ == '__main__':
 
     demo_inputs = ['1', '10', '32']
 
-    ''' function '''
+    ''' function format '''
     # for demo_input in demo_inputs:
     #     img = Image.open('demo/%s.jpg' % demo_input, 'r')
     #     res, occ = add_occ(img, occ_type='hand')
     #     res.save('demo/%s_occ.jpg' % demo_input)
     #     occ.save('demo/%s_msk.jpg' % demo_input)
 
-    # iterate_ijb(
-    #     out_folder='/gavin/datasets/msml/ijb/IJBB/object',
-    # )
+    ''' offline occlusion to IJB '''
+    iterate_ijb(
+        out_folder='/gavin/datasets/msml/ijb/IJBB/eyeglasses',
+    )
 
-    ''' class '''
-    ro = RealOcc(occ_type='rand')
-    for demo_input in demo_inputs:
-        img = Image.open('demo/%s.jpg' % demo_input, 'r')
-        img = img.resize((112, 112))
-        start = time.time()
-        res, occ = ro.__call__(img)
-        print('cost time: %d ms' % int((time.time() - start) * 1000))
-        res.save('demo/%s_occ.jpg' % demo_input)
-        occ.save('demo/%s_msk.jpg' % demo_input)
+    ''' class format '''
+    # ro = RealOcc(occ_type='rand')
+    # for demo_input in demo_inputs:
+    #     img = Image.open('demo/%s.jpg' % demo_input, 'r')
+    #     img = img.resize((112, 112))
+    #     start = time.time()
+    #     res, occ = ro.__call__(img)
+    #     print('cost time: %d ms' % int((time.time() - start) * 1000))
+    #     res.save('demo/%s_occ.jpg' % demo_input)
+    #     occ.save('demo/%s_msk.jpg' % demo_input)

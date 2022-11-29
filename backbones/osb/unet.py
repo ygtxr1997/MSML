@@ -291,8 +291,8 @@ if __name__ == '__main__':
     print(out[-1].shape)
 
     import thop
-    flops, params = thop.profile(osb, inputs=(img,))
-    print('flops', flops / 1e9, 'params', params / 1e6)
+    flops, params = thop.profile(osb, inputs=(img,), verbose=False)
+    print('#Params=%.2fM, GFLOPS=%.2f' % (params / 1e6, flops / 1e9))
 
     """ 2. IResNet accepts Gray-Scale images """
     print('-------- Test for osb-r18-gray-128 --------')
@@ -305,5 +305,5 @@ if __name__ == '__main__':
         print(idx, out[idx].shape)
 
     import thop
-    flops, params = thop.profile(osb, inputs=(img,))
-    print('flops', flops / 1e9, 'params', params / 1e6)
+    flops, params = thop.profile(osb, inputs=(img,), verbose=False)
+    print('#Params=%.2fM, GFLOPS=%.2f' % (params / 1e6, flops / 1e9))
