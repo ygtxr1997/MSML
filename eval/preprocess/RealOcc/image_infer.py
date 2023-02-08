@@ -38,16 +38,19 @@ Init Params:
 class RealOcc(object):
     def __init__(self,
                  occ_type: str = 'hand',
+                 split: str = 'train',
                  ):
         self.occ_type = occ_type
 
         self.on = None
         self.rom = None
+        self.split = split
         if occ_type == 'hand':
             sample_path = real_occ_path['11k-hands-txt']
             img_path = real_occ_path['11k-hands-img']
             mask_path = real_occ_path['11k-hands-msk']
             occluders_list = get_occluders_list_from_txt(sample_path)
+            occluders_list = self._split_samples(occluders_list, split)
             self.on = OccluderNmask(occluders_list=occluders_list,
                                     img_path=img_path,
                                     mask_path=mask_path)
@@ -55,6 +58,7 @@ class RealOcc(object):
             img_path = real_occ_path['coco-img']
             mask_path = real_occ_path['coco-msk']
             occluders_list = get_occluders_list_from_path(img_path)
+            occluders_list = self._split_samples(occluders_list, split)
             self.on = OccluderNmask(occluders_list=occluders_list,
                                     img_path=img_path,
                                     mask_path=mask_path)
@@ -123,6 +127,17 @@ class RealOcc(object):
         arr = cv2.copyMakeBorder(arr, p, p, p, p, cv2.BORDER_CONSTANT, value=(0, 0, 0))
         arr = cv2.resize(arr, (w, h))
         return arr
+
+    @staticmethod
+    def _split_samples(sample_list: list, split: str, ratio: float = 0.8):
+        n = len(sample_list)
+        middle = int(n * ratio)
+        if split == 'train':
+            lo, hi = 0, middle
+        else:
+            lo, hi = middle, n
+        return sample_list[lo: hi]
+
 
 def get_occluders_list_from_txt(txt: str = '/gavin/datasets/msml/real_occ/11k_hands_sample.txt'):
     occluders_list = []
