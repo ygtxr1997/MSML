@@ -74,8 +74,8 @@ class RealOcc(object):
 
         w, h = ori_img.size
         src_img = np.array(ori_img)
-        cv2.resize(occluder_img, ori_img.size)
-        cv2.resize(occluder_mask, ori_img.size)
+        occluder_img = cv2.resize(occluder_img, ori_img.size)
+        occluder_mask = cv2.resize(occluder_mask, ori_img.size)
 
         src_mask = np.ones((h, w), dtype=np.uint8)
         src_rect = cv2.boundingRect(src_mask)
@@ -93,6 +93,8 @@ class RealOcc(object):
             rotation = rotation + 180
         occluder_img = imutils.rotate_bound(occluder_img, rotation)
         occluder_mask = imutils.rotate_bound(occluder_mask, rotation)
+        occluder_img = self._resize_with_padding(occluder_img, ratio=0.75)
+        occluder_mask = self._resize_with_padding(occluder_mask, ratio=0.75)
 
         # overlay occluder to src images
         occlusion_mask = np.zeros(src_mask.shape, np.uint8)
@@ -112,6 +114,15 @@ class RealOcc(object):
 
         return result_img, occlusion_mask
 
+    @staticmethod
+    def _resize_with_padding(arr: np.ndarray, ratio: float):
+        h, w = arr.shape[0], arr.shape[1]
+        wr, hr = int(w * ratio), int(h * ratio)
+        arr = cv2.resize(arr, (wr, hr))
+        p = (w - wr) // 2
+        arr = cv2.copyMakeBorder(arr, p, p, p, p, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+        arr = cv2.resize(arr, (w, h))
+        return arr
 
 def get_occluders_list_from_txt(txt: str = '/gavin/datasets/msml/real_occ/11k_hands_sample.txt'):
     occluders_list = []
@@ -219,8 +230,8 @@ class IJBDataset(Dataset):
         self.img_list = os.listdir(ijb_folder)
 
         from datasets.augment.rand_occ import RandomRealObject, RandomGlasses
-        # self.occ_trans = RandomRealObject('/gavin/code/MSML/datasets/augment/occluder/object_test/')
-        self.occ_trans = RandomGlasses('/gavin/code/MSML/datasets/augment/occluder/eleglasses_crop/')
+        self.occ_trans = RandomRealObject('/gavin/code/MSML/datasets/augment/occluder/object_test/')
+        # self.occ_trans = RandomGlasses('/gavin/code/MSML/datasets/augment/occluder/eleglasses_crop/')
 
     def __getitem__(self, index):
         img_name = self.img_list[index]
@@ -262,7 +273,7 @@ if __name__ == '__main__':
     np.random.seed(4)
     random.seed(0)
 
-    demo_inputs = ['1', '10', '32']
+    demo_inputs = ['1', '10', '32'] * 5
 
     ''' function format '''
     # for demo_input in demo_inputs:
@@ -272,17 +283,20 @@ if __name__ == '__main__':
     #     occ.save('demo/%s_msk.jpg' % demo_input)
 
     ''' offline occlusion to IJB '''
-    iterate_ijb(
-        out_folder='/gavin/datasets/msml/ijb/IJBB/eyeglasses',
-    )
+    # iterate_ijb(
+    #     ijb_folder='/gavin/datasets/msml/ijb/IJBC/loose_crop',
+    #     out_folder='/gavin/datasets/msml/ijb/IJBC/object',
+    # )
 
     ''' class format '''
-    # ro = RealOcc(occ_type='rand')
-    # for demo_input in demo_inputs:
-    #     img = Image.open('demo/%s.jpg' % demo_input, 'r')
-    #     img = img.resize((112, 112))
-    #     start = time.time()
-    #     res, occ = ro.__call__(img)
-    #     print('cost time: %d ms' % int((time.time() - start) * 1000))
-    #     res.save('demo/%s_occ.jpg' % demo_input)
-    #     occ.save('demo/%s_msk.jpg' % demo_input)
+    ro = RealOcc(occ_type='coco')
+    idx = 0
+    for demo_input in demo_inputs:
+        img = Image.open('demo/%s.jpg' % demo_input, 'r')
+        img = img.resize((112, 112))
+        start = time.time()
+        res, occ = ro.__call__(img)
+        print('cost time: %d ms' % int((time.time() - start) * 1000))
+        res.save('demo/%s_%d_occ.jpg' % (demo_input, idx))
+        occ.save('demo/%s_%d_msk.jpg' % (demo_input, idx))
+        idx += 1
